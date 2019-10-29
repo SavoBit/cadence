@@ -2,14 +2,21 @@ package main
 
 import (
     "fmt"
+    "encoding/json"
     "os"
     "os/signal"
 
     "github.com/Shopify/sarama"
+    lru "github.com/hashicorp/golang-lru"
     "github.com/mistsys/mist_go_utils/cloud"
 )
 
+var aps_cache *lru.Cache
+
+
+
 func main() {
+    aps_cache, _ = lru.New(128)
     fmt.Println("Welcome to cadence!")
     fmt.Printf("Broker list:%+v\n", cloud.KAFKA_BROKERS)
     conf := sarama.NewConfig()
@@ -30,7 +37,15 @@ func main() {
             select {
                 case msg := <-consumer:
                     msgCount++
-                    fmt.Printf("Recv msgs k:%+v msg:%+v\n\n", string(msg.Key), string(msg.Value))
+                    edge_msg := make(map[string]interface{})
+                    err := json.Unmarshal([]byte(msg.Value), &edge_msg)
+                    if err != nil {
+                        panic(err)
+                    }
+                    fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n\n", aps_cache.Len(), string(msg.Key), edge_msg)
+                    aps_cache.Add(edge_msg["ID"], edge_msg)
+                    k, v, _ := aps_cache.GetOldest()
+                    fmt.Printf("oooooooooooo k:%+v v:%+v\n\n\n", k, v)
                 case consumerError := <-errors:
                     msgCount++
                     fmt.Printf("Recv errors ", string(consumerError.Topic), string(consumerError.Partition), consumerError.Err)
