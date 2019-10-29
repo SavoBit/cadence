@@ -6,17 +6,22 @@ import (
     "os"
     "os/signal"
 
+    list "container/list"
     "github.com/Shopify/sarama"
-    lru "github.com/hashicorp/golang-lru"
     "github.com/mistsys/mist_go_utils/cloud"
 )
 
-var edge_cache *lru.Cache
-
+// sorted list for edges, sorting done on ep-term timestamp. In future we can
+// make this user defined
+var edge_list *list.List
+// hash map for storing the location of each device in the list. Just like in an LRU cache
+// implementation
+var edge_ptr_map map[interface{}]map[string]interface{}
 
 
 func main() {
-    edge_cache, _ = lru.New(128)
+    edge_list = list.New()
+    edge_ptr_map = make(map[interface{}]map[string]interface{})
     fmt.Println("Welcome to cadence!")
     fmt.Printf("Broker list:%+v\n", cloud.KAFKA_BROKERS)
     conf := sarama.NewConfig()
@@ -42,10 +47,15 @@ func main() {
                     if err != nil {
                         panic(err)
                     }
-                    fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n\n", edge_cache.Len(), string(msg.Key), edge_msg)
-                    edge_cache.Add(edge_msg["ID"], edge_msg)
-                    k, v, _ := edge_cache.GetOldest()
-                    fmt.Printf("oooooooooooo k:%+v v:%+v\n\n\n", k, v)
+                    fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n\n", edge_list.Len(), string(msg.Key), edge_msg)
+                    edge_list.PushFront(edge_msg)
+                    edge_ptr_map[edge_msg["ID"]] = edge_msg
+                    fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
+                    if val, ok := edge_ptr_map["7a45714c-cb93-47fd-9d9a-7786ded2bb2b"]; ok {
+                        fmt.Printf("pppppp %+v\n\n", val)
+                    } else {
+                        fmt.Printf("NOOOOOTTT FOUNDDDD\n\n")
+                    }
                 case consumerError := <-errors:
                     msgCount++
                     fmt.Printf("Recv errors ", string(consumerError.Topic), string(consumerError.Partition), consumerError.Err)
@@ -66,7 +76,7 @@ func consume(topic string, master sarama.Consumer) (chan *sarama.ConsumerMessage
     partitions, _ := master.Partitions(topic)
     fmt.Printf("Topic:%s # partitions:%d\n", topic, len(partitions))
 
-    consumer, err := master.ConsumePartition(topic, partitions[0], sarama.OffsetOldest)
+    consumer, err := master.ConsumePartition(topic, partitions[0], sarama.OffsetNewest)
     if err != nil {
         panic(err)
     }
