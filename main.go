@@ -49,13 +49,15 @@ func main() {
                     }
                     fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n\n", edge_list.Len(), string(msg.Key), edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"])
                     edge_list.PushFront(edge_msg)
-                    edge_ptr_map[edge_msg["ID"].(string)] = edge_msg
-                    fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
-                    if val, ok := edge_ptr_map["7a45714c-cb93-47fd-9d9a-7786ded2bb2b"]; ok {
-                        fmt.Printf("pppppp %+v\n\n", val)
+                    if edge_cur_msg, ok := edge_ptr_map[edge_msg["ID"].(string)]; ok {
+                        cur_ts := edge_cur_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"].(string)
+                        if cur_ts < edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"].(string) {
+                            edge_ptr_map[edge_msg["ID"].(string)] = edge_msg
+                        }
                     } else {
-                        fmt.Printf("NOOOOOTTT FOUNDDDD\n\n")
+                        edge_ptr_map[edge_msg["ID"].(string)] = edge_msg
                     }
+                    fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
                 case consumerError := <-errors:
                     msgCount++
                     fmt.Printf("Recv errors ", string(consumerError.Topic), string(consumerError.Partition), consumerError.Err)
