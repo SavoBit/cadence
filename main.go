@@ -16,12 +16,12 @@ import (
 var edge_list *list.List
 // hash map for storing the location of each device in the list. Just like in an LRU cache
 // implementation
-var edge_ptr_map map[string]map[string]interface{}
+var edge_ptr_map map[string]*list.Element
 
 
 func main() {
     edge_list = list.New()
-    edge_ptr_map = make(map[string]map[string]interface{})
+    edge_ptr_map = make(map[string]*list.Element)
     fmt.Println("Welcome to cadence!")
     fmt.Printf("Broker list:%+v\n", cloud.KAFKA_BROKERS)
     conf := sarama.NewConfig()
@@ -48,14 +48,25 @@ func main() {
                         panic(err)
                     }
                     fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n\n", edge_list.Len(), string(msg.Key), edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"])
-                    edge_list.PushFront(edge_msg)
-                    if edge_cur_msg, ok := edge_ptr_map[edge_msg["ID"].(string)]; ok {
-                        cur_ts := edge_cur_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"].(string)
-                        if cur_ts < edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"].(string) {
-                            edge_ptr_map[edge_msg["ID"].(string)] = edge_msg
+                    if edge_ptr, ok := edge_ptr_map[edge_msg["ID"].(string)]; ok {
+                        // check timestamp on the newly recvd msg and compare it to what
+                        // we have in the list for this edge. If we recv a more recent msg
+                        // update the list and put the node at the tail of the list
+                        // remember, the tail has the edges with the most recent msgs
+                        fmt.Printf("found stuff %+v\n\n", edge_ptr.Value.(map[string]interface{})["InfoFromTerminator"].(map[string]interface{})["Timestamp"])
+                        cur_info := edge_ptr.Value.(map[string]interface{})["InfoFromTerminator"]
+
+                        cur_ts := cur_info.(map[string]interface{})["Timestamp"].(string)
+                        new_info := edge_msg["InfoFromTerminator"]
+                        if cur_ts < new_info.(map[string]interface{})["Timestamp"].(string) {
+                            //edge_ptr_map[edge_msg["ID"].(string)] = edge_msg
+                            fmt.Printf("resetting ... %+v", edge_ptr)
                         }
+
                     } else {
-                        edge_ptr_map[edge_msg["ID"].(string)] = edge_msg
+                        // New edge, add in the map and enter a new node in the list
+                        e := edge_list.PushFront(edge_msg)
+                        edge_ptr_map[edge_msg["ID"].(string)] = e
                     }
                     fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
                 case consumerError := <-errors:
