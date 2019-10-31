@@ -2,6 +2,7 @@ package main
 
 import (
     "fmt"
+    "time"
     "encoding/json"
     "os"
     "os/signal"
@@ -18,9 +19,45 @@ var edge_list *list.List
 // implementation
 var edge_ptr_map map[string]*list.Element
 
+func getTimeStamp(e *list.Element) (ts string) {
+    cur_ts := e.Value.(map[string]interface{})["InfoFromTerminator"]
+    ts = cur_ts.(map[string]interface{})["Timestamp"].(string)
+    return ts
+}
+
+func findPosition(ts string) (e *list.Element) {
+    for e := edge_list.Back(); e != nil; e = e.Prev() {
+        cur_ts := getTimeStamp(e)
+        if ts > cur_ts {
+            return e
+        }
+    }
+    return e
+}
+
+func sanityChecker() {
+    for {
+        var last_ts string
+        for e := edge_list.Front(); e != nil; e = e.Next() {
+            cur_ts := getTimeStamp(e)
+            fmt.Printf("ssss %s %s\n", last_ts, cur_ts)
+            if last_ts != "" {
+                if cur_ts < last_ts {
+                    fmt.Printf("Crap!!! %s %s", last_ts, cur_ts)
+                    panic("Crap!!!")
+                }
+            } else {
+                last_ts = cur_ts
+            }
+        }
+        time.Sleep(1 * time.Second)
+    }
+}
+
 
 func main() {
     edge_list = list.New()
+    go sanityChecker()
     edge_ptr_map = make(map[string]*list.Element)
     fmt.Println("Welcome to cadence!")
     fmt.Printf("Broker list:%+v\n", cloud.KAFKA_BROKERS)
@@ -48,6 +85,8 @@ func main() {
                         panic(err)
                     }
                     fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n\n", edge_list.Len(), string(msg.Key), edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"])
+                    new_info := edge_msg["InfoFromTerminator"]
+                    new_ts := new_info.(map[string]interface{})["Timestamp"].(string)
                     if edge_ptr, ok := edge_ptr_map[edge_msg["ID"].(string)]; ok {
                         // check timestamp on the newly recvd msg and compare it to what
                         // we have in the list for this edge. If we recv a more recent msg
@@ -57,15 +96,25 @@ func main() {
                         cur_info := edge_ptr.Value.(map[string]interface{})["InfoFromTerminator"]
 
                         cur_ts := cur_info.(map[string]interface{})["Timestamp"].(string)
-                        new_info := edge_msg["InfoFromTerminator"]
-                        if cur_ts < new_info.(map[string]interface{})["Timestamp"].(string) {
-                            //edge_ptr_map[edge_msg["ID"].(string)] = edge_msg
+                        if cur_ts < new_ts {
+                            // more recent beat received, lets delete this element and put it
+                            // at the back of the list
+                            edge_list.Remove(edge_ptr)
+                            e := edge_list.PushFront(edge_msg)
+                            pos := findPosition(new_ts)
+                            edge_list.MoveAfter(e, pos)
+                            edge_ptr_map[edge_msg["ID"].(string)] = e
                             fmt.Printf("resetting ... %+v", edge_ptr)
                         }
 
                     } else {
                         // New edge, add in the map and enter a new node in the list
                         e := edge_list.PushFront(edge_msg)
+                        pos := findPosition(new_ts)
+                        if pos != nil {
+                            fmt.Printf("llllllllllll %+v %+v\n\n", e, pos)
+                            edge_list.MoveAfter(e, pos)
+                        }
                         edge_ptr_map[edge_msg["ID"].(string)] = e
                     }
                     fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
