@@ -80,6 +80,8 @@ func sanityChecker() {
 }
 
 func filterMsg(msg map[string]interface{}) (bool) {
+    // TODO: this function currently has hardcoded stuff
+    // this should be made configurable
     return msg["MsgType"] == "sys_metric"
 }
 
