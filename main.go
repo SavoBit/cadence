@@ -50,11 +50,15 @@ func checkEdgeStatus() {
     for {
         for e := edge_list.Front(); e != nil; e = e.Next() {
             cur_ts := getTimeStamp(e)
-            fmt.Printf("rttttttttttttttttt %d\n", cur_ts)
-            if CURRENT_STREAM_TIME > 5 + cur_ts {
-                fmt.Printf("DOWN!!!!\n\n")
+            status := e.Value.(map[string]interface{})["cadence_status"]
+            id := e.Value.(map[string]interface{})["ID"]
+            fmt.Printf("ID:%s last beat:%d status:%s\n", id, cur_ts, status)
+            if CURRENT_STREAM_TIME > 5 + cur_ts && status == "UP" {
+                fmt.Printf("EDGE is DOWN!!!!\n\n")
+                e.Value.(map[string]interface{})["cadence_status"] = "DOWN"
             }
         }
+        fmt.Printf("\n\n")
         time.Sleep(1 * time.Second)
     }
 }
@@ -65,7 +69,6 @@ func sanityChecker() {
         last_ts = -1
         for e := edge_list.Front(); e != nil; e = e.Next() {
             cur_ts := getTimeStamp(e)
-            fmt.Printf("ssss %s %s\n", last_ts, cur_ts)
             if last_ts != -1 {
                 if cur_ts < last_ts {
                     fmt.Printf("Crap!!! %s %s", last_ts, cur_ts)
@@ -120,35 +123,38 @@ func main() {
                         fmt.Printf("Filtering out msg:%s", edge_msg["MsgType"])
                         break
                     }
-                    //fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n\n", edge_list.Len(), string(msg.Key), edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"])
-                    fmt.Printf("msggg %+v\n\n", edge_msg)
+                    fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n", edge_list.Len(), string(msg.Key), edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"])
                     new_info := edge_msg["InfoFromTerminator"]
                     new_ts := getEpoch(new_info.(map[string]interface{})["Timestamp"].(string))
                     if new_ts > CURRENT_STREAM_TIME {
                         CURRENT_STREAM_TIME = new_ts
                     }
                     //keys := make([]string, 0, len(edge_msg))
-                    fmt.Printf("mmmmmmmmmmmmm %+v", edge_msg["InfoFromTerminator"])
                     if edge_ptr, ok := edge_ptr_map[edge_msg["ID"].(string)]; ok {
                         // check timestamp on the newly recvd msg and compare it to what
                         // we have in the list for this edge. If we recv a more recent msg
                         // update the list and put the node at the tail of the list
                         // remember, the tail has the edges with the most recent msgs
-                        fmt.Printf("found stuff %+v\n\n", edge_ptr.Value.(map[string]interface{})["InfoFromTerminator"].(map[string]interface{})["Timestamp"])
+                        //fmt.Printf("found stuff %+v\n\n", edge_ptr.Value.(map[string]interface{})["InfoFromTerminator"].(map[string]interface{})["Timestamp"])
                         cur_info := edge_ptr.Value.(map[string]interface{})["InfoFromTerminator"]
 
                         cur_ts := getEpoch(cur_info.(map[string]interface{})["Timestamp"].(string))
                         if cur_ts < new_ts {
+                            status := edge_ptr.Value.(map[string]interface{})["cadence_status"]
+                            if status == "DOWN" {
+                                fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", edge_msg["ID"])
+                            }
                             // more recent beat received, lets delete this element and put it
                             // at the back of the list
                             edge_list.Remove(edge_ptr)
+                            edge_msg["cadence_status"] = "UP"
                             e := edge_list.PushFront(edge_msg)
                             pos := findPosition(new_ts)
                             if pos != nil {
                                 edge_list.MoveAfter(e, pos)
                             }
                             edge_ptr_map[edge_msg["ID"].(string)] = e
-                            fmt.Printf("resetting ... %+v", edge_ptr)
+                            //fmt.Printf("resetting ... %+v", edge_ptr)
                         }
 
                     } else {
@@ -156,12 +162,11 @@ func main() {
                         e := edge_list.PushFront(edge_msg)
                         pos := findPosition(new_ts)
                         if pos != nil {
-                            fmt.Printf("llllllllllll %+v %+v\n\n", e, pos)
                             edge_list.MoveAfter(e, pos)
                         }
                         edge_ptr_map[edge_msg["ID"].(string)] = e
                     }
-                    fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
+                    //fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
                 case consumerError := <-errors:
                     msgCount++
                     fmt.Printf("Recv errors ", string(consumerError.Topic), string(consumerError.Partition), consumerError.Err)
