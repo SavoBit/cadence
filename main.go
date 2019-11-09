@@ -88,6 +88,29 @@ func filterMsg(msg map[string]interface{}) (bool) {
     return msg["MsgType"] == "sys_metric"
 }
 
+type MXEdgeEvent struct {
+    Name    string  `json:"name"`
+
+	encoded []byte
+	err     error
+}
+
+func (ale *MXEdgeEvent) Length() int {
+	ale.ensureEncoded()
+	return len(ale.encoded)
+}
+
+func (ale *MXEdgeEvent) ensureEncoded() {
+	if ale.encoded == nil && ale.err == nil {
+		ale.encoded, ale.err = json.Marshal(ale)
+	}
+}
+
+func (ale *MXEdgeEvent) Encode() ([]byte, error) {
+	ale.ensureEncoded()
+	return ale.encoded, ale.err
+}
+
 
 func main() {
     edge_list = list.New()
@@ -102,6 +125,33 @@ func main() {
     if err != nil {
         panic(err)
     }
+//////////////////////////////////////////////////////////////////
+    //setup relevant config info
+    config := sarama.NewConfig()
+    config.Producer.Partitioner = sarama.NewRandomPartitioner
+    config.Producer.Return.Successes = true
+    config.Producer.RequiredAcks = sarama.WaitForAll
+    producer, err := sarama.NewSyncProducer(cloud.KAFKA_BROKERS, config)
+    if err != nil {
+        panic(err)
+    }
+
+    topic := "mxedge-events-staging" //e.g create-user-topic
+    //partition := 0 //Partition to produce to 
+    //msg := "actual information to save on kafka" //e.g {"name":"John Doe", "email":"john.doe@email.com"}
+    msg := &MXEdgeEvent{
+        Name: "osman",
+    }
+    message := &sarama.ProducerMessage{
+                     Topic: topic,
+                     Partition: 0,
+                     Value: msg,
+               }
+    fmt.Printf("mmmmmm %+v\n\n%+v\n\n\n", message, producer)
+    partition, offset, _ := producer.SendMessage(message)
+    fmt.Printf("%+v %+v ", partition, offset)
+//////////////////////////////////////////////////////////////////
+
 //    st, _ := master.Topics()
     consumer, errors := consume("marvis-edge-to-cloud-staging", master)
     signals := make(chan os.Signal, 1)
