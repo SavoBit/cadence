@@ -46,7 +46,7 @@ func findPosition(ts int64) (e *list.Element) {
     return e
 }
 
-func checkEdgeStatus() {
+func checkEdgeStatus(producer sarama.SyncProducer) {
     for {
         for e := edge_list.Front(); e != nil; e = e.Next() {
             cur_ts := getTimeStamp(e)
@@ -55,6 +55,23 @@ func checkEdgeStatus() {
             fmt.Printf("ID:%s last beat:%d status:%s\n", id, cur_ts, status)
             if CURRENT_STREAM_TIME > 5 + cur_ts && status == "UP" {
                 fmt.Printf("EDGE is DOWN!!!!\n\n")
+    ////////////////////////////////////////////////////////////////////
+            topic := "mxedge-events-staging" //e.g create-user-topic
+            msg := &MXEdgeEvent{
+                EventType: "edge_down",
+                MXEdgeID:  id.(string),
+                S3Path: "NA",
+                AppName: "mxagent",
+            }
+            message := &sarama.ProducerMessage{
+                             Topic: topic,
+                             Partition: 0,
+                             Value: msg,
+                       }
+            fmt.Printf("mmmmmm %+v\n\n%+v\n\n\n", msg, producer)
+            partition, offset, _ := producer.SendMessage(message)
+            fmt.Printf("%+v %+v ", partition, offset)
+    ////////////////////////////////////////////////////////////////////
                 e.Value.(map[string]interface{})["cadence_status"] = "DOWN"
             }
         }
@@ -89,7 +106,10 @@ func filterMsg(msg map[string]interface{}) (bool) {
 }
 
 type MXEdgeEvent struct {
-    Name    string  `json:"name"`
+    EventType    string  `json:"event_type"`
+    MXEdgeID      string  `json:"mxedge_id"`
+    S3Path      string  `json:"s3_path"`
+    AppName     string  `json:"app_name"`
 
 	encoded []byte
 	err     error
@@ -115,7 +135,6 @@ func (ale *MXEdgeEvent) Encode() ([]byte, error) {
 func main() {
     edge_list = list.New()
     go sanityChecker()
-    go checkEdgeStatus()
     edge_ptr_map = make(map[string]*list.Element)
     fmt.Println("Welcome to cadence!")
     fmt.Printf("Broker list:%+v\n", cloud.KAFKA_BROKERS)
@@ -135,21 +154,8 @@ func main() {
     if err != nil {
         panic(err)
     }
+    go checkEdgeStatus(producer)
 
-    topic := "mxedge-events-staging" //e.g create-user-topic
-    //partition := 0 //Partition to produce to 
-    //msg := "actual information to save on kafka" //e.g {"name":"John Doe", "email":"john.doe@email.com"}
-    msg := &MXEdgeEvent{
-        Name: "osman",
-    }
-    message := &sarama.ProducerMessage{
-                     Topic: topic,
-                     Partition: 0,
-                     Value: msg,
-               }
-    fmt.Printf("mmmmmm %+v\n\n%+v\n\n\n", message, producer)
-    partition, offset, _ := producer.SendMessage(message)
-    fmt.Printf("%+v %+v ", partition, offset)
 //////////////////////////////////////////////////////////////////
 
 //    st, _ := master.Topics()
@@ -193,6 +199,24 @@ func main() {
                             status := edge_ptr.Value.(map[string]interface{})["cadence_status"]
                             if status == "DOWN" {
                                 fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", edge_msg["ID"])
+                    ///////////////////////////////////////////////////////////////////////////
+                                id := edge_msg["ID"]
+                                topic := "mxedge-events-staging" //e.g create-user-topic
+                                msg := &MXEdgeEvent{
+                                    EventType: "edge_up",
+                                    MXEdgeID:  id.(string),
+                                    S3Path: "NA",
+                                    AppName: "mxagent",
+                                }
+                                message := &sarama.ProducerMessage{
+                                                 Topic: topic,
+                                                 Partition: 0,
+                                                 Value: msg,
+                                           }
+                                fmt.Printf("mmmmmm %+v\n\n%+v\n\n\n", msg, producer)
+                                partition, offset, _ := producer.SendMessage(message)
+                                fmt.Printf("%+v %+v ", partition, offset)
+                    ///////////////////////////////////////////////////////////////////////////
                             }
                             // more recent beat received, lets delete this element and put it
                             // at the back of the list
