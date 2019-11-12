@@ -56,21 +56,7 @@ func checkEdgeStatus(producer sarama.SyncProducer) {
             if CURRENT_STREAM_TIME > 5 + cur_ts && status == "UP" {
                 fmt.Printf("EDGE is DOWN!!!!\n\n")
     ////////////////////////////////////////////////////////////////////
-            topic := "mxedge-events-staging" //e.g create-user-topic
-            msg := &MXEdgeEvent{
-                EventType: "edge_down",
-                MXEdgeID:  id.(string),
-                S3Path: "NA",
-                AppName: "mxagent",
-            }
-            message := &sarama.ProducerMessage{
-                             Topic: topic,
-                             Partition: 0,
-                             Value: msg,
-                       }
-            fmt.Printf("mmmmmm %+v\n\n%+v\n\n\n", msg, producer)
-            partition, offset, _ := producer.SendMessage(message)
-            fmt.Printf("%+v %+v ", partition, offset)
+                send_event_msg(producer, "down", id.(string))
     ////////////////////////////////////////////////////////////////////
                 e.Value.(map[string]interface{})["cadence_status"] = "DOWN"
             }
@@ -107,6 +93,7 @@ func filterMsg(msg map[string]interface{}) (bool) {
 
 type MXEdgeEvent struct {
     EventType    string  `json:"event_type"`
+    Time        string  `json:"time"`
     MXEdgeID      string  `json:"mxedge_id"`
     S3Path      string  `json:"s3_path"`
     AppName     string  `json:"app_name"`
@@ -200,22 +187,7 @@ func main() {
                             if status == "DOWN" {
                                 fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", edge_msg["ID"])
                     ///////////////////////////////////////////////////////////////////////////
-                                id := edge_msg["ID"]
-                                topic := "mxedge-events-staging" //e.g create-user-topic
-                                msg := &MXEdgeEvent{
-                                    EventType: "edge_up",
-                                    MXEdgeID:  id.(string),
-                                    S3Path: "NA",
-                                    AppName: "mxagent",
-                                }
-                                message := &sarama.ProducerMessage{
-                                                 Topic: topic,
-                                                 Partition: 0,
-                                                 Value: msg,
-                                           }
-                                fmt.Printf("mmmmmm %+v\n\n%+v\n\n\n", msg, producer)
-                                partition, offset, _ := producer.SendMessage(message)
-                                fmt.Printf("%+v %+v ", partition, offset)
+                                send_event_msg(producer, "up", edge_msg["ID"].(string))
                     ///////////////////////////////////////////////////////////////////////////
                             }
                             // more recent beat received, lets delete this element and put it
@@ -239,6 +211,9 @@ func main() {
                             edge_list.MoveAfter(e, pos)
                         }
                         edge_ptr_map[edge_msg["ID"].(string)] = e
+                        ///////////////////////////////////////////////////////////////////////////
+                        send_event_msg(producer, "up", edge_msg["ID"].(string))
+                        ///////////////////////////////////////////////////////////////////////////
                     }
                     //fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
                 case consumerError := <-errors:
@@ -253,6 +228,24 @@ func main() {
         }
     }()
     <-doneCh
+}
+
+func send_event_msg(producer sarama.SyncProducer, op string, id string) {
+    topic := "mxedge-events-staging" //e.g create-user-topic
+    msg := &MXEdgeEvent{
+        EventType: "edge_" + op,
+        MXEdgeID:  id,
+        S3Path: "NA",
+        Time: time.Now().String(),
+        AppName: "mxagent",
+    }
+    message := &sarama.ProducerMessage{
+                     Topic: topic,
+                     Partition: 0,
+                     Value: msg,
+               }
+    partition, offset, _ := producer.SendMessage(message)
+    fmt.Printf("Event:%s msg sent %+v %+v ", op, partition, offset)
 }
 
 func consume(topic string, master sarama.Consumer) (chan *sarama.ConsumerMessage, chan *sarama.ConsumerError) {
