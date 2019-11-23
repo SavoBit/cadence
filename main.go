@@ -52,11 +52,12 @@ func checkEdgeStatus(producer sarama.SyncProducer) {
             cur_ts := getTimeStamp(e)
             status := e.Value.(map[string]interface{})["cadence_status"]
             id := e.Value.(map[string]interface{})["ID"]
+            org_id := e.Value.(map[string]interface{})["OrgID"]
             fmt.Printf("ID:%s last beat:%d status:%s\n", id, cur_ts, status)
             if CURRENT_STREAM_TIME > 5 + cur_ts && status == "UP" {
                 fmt.Printf("EDGE is DOWN!!!!\n\n")
     ////////////////////////////////////////////////////////////////////
-                send_event_msg(producer, "down", id.(string))
+                send_event_msg(producer, "down", id.(string), org_id.(string))
     ////////////////////////////////////////////////////////////////////
                 e.Value.(map[string]interface{})["cadence_status"] = "DOWN"
             }
@@ -92,11 +93,12 @@ func filterMsg(msg map[string]interface{}) (bool) {
 }
 
 type MXEdgeEvent struct {
-    EventType    string  `json:"event_type"`
-    Time        string  `json:"time"`
-    MXEdgeID      string  `json:"mxedge_id"`
-    S3Path      string  `json:"s3_path"`
-    AppName     string  `json:"app_name"`
+    MsgType    string  `json:"MsgType"`
+    Time        string  `json:"Time"`
+    OrgID       string  `json:"OrgID"`
+    MXEdgeID      string  `json:"ID"`
+    S3Path      string  `json:"S3Path"`
+    AppName     string  `json:"AppName"`
 
 	encoded []byte
 	err     error
@@ -187,7 +189,7 @@ func main() {
                             if status == "DOWN" {
                                 fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", edge_msg["ID"])
                     ///////////////////////////////////////////////////////////////////////////
-                                send_event_msg(producer, "up", edge_msg["ID"].(string))
+                                send_event_msg(producer, "up", edge_msg["ID"].(string), edge_msg["OrgID"].(string))
                     ///////////////////////////////////////////////////////////////////////////
                             }
                             // more recent beat received, lets delete this element and put it
@@ -212,7 +214,7 @@ func main() {
                         }
                         edge_ptr_map[edge_msg["ID"].(string)] = e
                         ///////////////////////////////////////////////////////////////////////////
-                        send_event_msg(producer, "up", edge_msg["ID"].(string))
+                        send_event_msg(producer, "up", edge_msg["ID"].(string), edge_msg["OrgID"].(string))
                         ///////////////////////////////////////////////////////////////////////////
                     }
                     //fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
@@ -230,12 +232,13 @@ func main() {
     <-doneCh
 }
 
-func send_event_msg(producer sarama.SyncProducer, op string, id string) {
+func send_event_msg(producer sarama.SyncProducer, op string, id string, org_id string) {
     topic := "mxedge-events-staging" //e.g create-user-topic
     msg := &MXEdgeEvent{
-        EventType: "edge_" + op,
+        MsgType: "edge_" + op,
         MXEdgeID:  id,
         S3Path: "NA",
+        OrgID: org_id,
         Time: time.Now().String(),
         AppName: "mxagent",
     }
