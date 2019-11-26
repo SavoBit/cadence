@@ -214,7 +214,13 @@ func main() {
                         }
                         edge_ptr_map[edge_msg["ID"].(string)] = e
                         ///////////////////////////////////////////////////////////////////////////
-                        send_event_msg(producer, "up", edge_msg["ID"].(string), edge_msg["OrgID"].(string))
+                        // No need to send a UP event if this is the first time we are hearing
+                        // about the edge
+                        // TODO: start checkpointing and then we could send the UP event if we
+                        // get a new edge. Right now whenever cadence starts, we will end up
+                        // trigerring UP events for ALL the edges since all of them will be
+                        // considered new due to no checkpointing.
+                        //send_event_msg(producer, "up", edge_msg["ID"].(string), edge_msg["OrgID"].(string))
                         ///////////////////////////////////////////////////////////////////////////
                     }
                     //fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
