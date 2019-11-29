@@ -159,8 +159,11 @@ func main() {
 	flag.StringVar(&HEART_BEAT_TOPIC, "topic", "marvis-edge-tt-cloud-", "define heart beat topic")
 	flag.Parse()
 	HB_TOPIC_FULLNAME := HEART_BEAT_TOPIC + cloud.ENV
-	fmt.Printf("TTTTTTTTTT %s\n", HB_TOPIC_FULLNAME)
+	fmt.Printf("Consuming from topic: %s\n", HB_TOPIC_FULLNAME)
 	consumer, errors := consume(HB_TOPIC_FULLNAME, master)
+	if errors != nil {
+		fmt.Printf("Errors while reading:%+v\n", errors)
+	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt)
 
