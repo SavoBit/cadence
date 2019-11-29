@@ -9,9 +9,11 @@ import (
 
 	list "container/list"
 	"github.com/Shopify/sarama"
+	"github.com/mistsys/cadence/stats"
 	"github.com/mistsys/mist_go_utils/cloud"
 	"github.com/mistsys/mist_go_utils/flag"
 	"github.com/mistsys/mist_go_utils/timeparse"
+	"github.com/mistsys/protobuf3/protobuf3"
 )
 
 // sorted list for edges, sorting done on ep-term timestamp. In future we can
@@ -174,11 +176,19 @@ func main() {
 			select {
 			case msg := <-consumer:
 				msgCount++
+
 				edge_msg := make(map[string]interface{})
-				err := json.Unmarshal([]byte(msg.Value), &edge_msg)
-				if err != nil {
+				/*
+					err := json.Unmarshal([]byte(msg.Value), &edge_msg)
+					if err != nil {
+						panic(err)
+					}
+				*/
+				var m stats.TTStats
+				if err = protobuf3.Unmarshal(msg.Value, &m); err != nil {
 					panic(err)
 				}
+				fmt.Printf("------------------- %+v\n\n\n", m)
 				if !filterMsg(edge_msg) {
 					fmt.Printf("Filtering out msg:%s", edge_msg["MsgType"])
 					break
