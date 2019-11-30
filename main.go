@@ -35,6 +35,9 @@ var HEART_BEAT_TOPIC string
 // full name for heart beat topic including ENV
 var HB_TOPIC_FULLNAME string
 
+// is the topic PB or not
+var IS_PB bool
+
 func getTimeStamp(e *list.Element) int64 {
 	cur_ts := e.Value.(map[string]interface{})["InfoFromTerminator"]
 	ts := cur_ts.(map[string]interface{})["Timestamp"].(string)
@@ -159,9 +162,10 @@ func main() {
 
 	//    st, _ := master.Topics()
 	flag.StringVar(&HEART_BEAT_TOPIC, "topic", "marvis-edge-tt-cloud-", "define heart beat topic")
+	flag.BoolVar(&IS_PB, "ispb", false, "define if the topic is pb")
 	flag.Parse()
 	HB_TOPIC_FULLNAME := HEART_BEAT_TOPIC + cloud.ENV
-	fmt.Printf("Consuming from topic: %s\n", HB_TOPIC_FULLNAME)
+	fmt.Printf("Consuming from topic: %s ispb: %t\n", HB_TOPIC_FULLNAME, IS_PB)
 	consumer, errors := consume(HB_TOPIC_FULLNAME, master)
 	if errors != nil {
 		fmt.Printf("Errors while reading:%+v\n", errors)
@@ -178,17 +182,11 @@ func main() {
 				msgCount++
 
 				edge_msg := make(map[string]interface{})
-				/*
-					err := json.Unmarshal([]byte(msg.Value), &edge_msg)
-					if err != nil {
-						panic(err)
-					}
-				*/
 				var m stats.TTStats
 				if err = protobuf3.Unmarshal(msg.Value, &m); err != nil {
 					panic(err)
 				}
-				fmt.Printf("------------------- %+v\n\n\n", m)
+				fmt.Printf("------------------- %+v\n\n\n", m.InfoFromTerminator)
 				if !filterMsg(edge_msg) {
 					fmt.Printf("Filtering out msg:%s", edge_msg["MsgType"])
 					break
