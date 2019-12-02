@@ -73,7 +73,13 @@ func checkEdgeStatus(producer sarama.SyncProducer) {
 				////////////////////////////////////////////////////////////////////
 				send_event_msg(producer, "down", id, org_id)
 				////////////////////////////////////////////////////////////////////
-				e.Value.(EdgeState).SetCadenceStatus("DOWN")
+				new_state := EdgeState{
+					CadenceStatus: "DOWN",
+					ID:            id,
+					OrgID:         org_id,
+					TimeStamp:     cur_ts,
+				}
+				e.Value = new_state
 			}
 		}
 		fmt.Printf("\n\n")
@@ -225,8 +231,8 @@ func main() {
 				if err != nil {
 					panic(err)
 				}
-				org_id := edge_msg["OrgID"].(string)
-				cur_id := edge_msg["ID"].(string)
+				org_id := edge_msg["InfoFromTerminator"].(map[string]interface{})["OrgID"].(string)
+				cur_id := edge_msg["InfoFromTerminator"].(map[string]interface{})["ID"].(string)
 				msg_ts := edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"]
 				if IS_PB {
 					var m stats.TTStats
@@ -266,14 +272,12 @@ func main() {
 						// more recent beat received, lets delete this element and put it
 						// at the back of the list
 						edge_list.Remove(edge_ptr)
-						edge_msg["cadence_status"] = "UP"
 						new_state := EdgeState{
 							CadenceStatus: "UP",
 							ID:            cur_id,
 							OrgID:         org_id,
 							TimeStamp:     new_ts,
 						}
-						//e := edge_list.PushFront(edge_msg)
 						e := edge_list.PushFront(new_state)
 						pos := findPosition(new_ts)
 						if pos != nil {
@@ -291,7 +295,6 @@ func main() {
 						OrgID:         org_id,
 						TimeStamp:     new_ts,
 					}
-					//e := edge_list.PushFront(edge_msg)
 					e := edge_list.PushFront(new_state)
 					pos := findPosition(new_ts)
 					if pos != nil {
