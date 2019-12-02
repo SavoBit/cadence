@@ -52,7 +52,7 @@ func getEpoch(ts string) int64 {
 
 func findPosition(ts int64) (e *list.Element) {
 	for e := edge_list.Back(); e != nil; e = e.Prev() {
-		cur_ts := getTimeStamp(e)
+		cur_ts := e.Value.(EdgeState).TimeStamp
 		if ts > cur_ts {
 			return e
 		}
@@ -63,17 +63,17 @@ func findPosition(ts int64) (e *list.Element) {
 func checkEdgeStatus(producer sarama.SyncProducer) {
 	for {
 		for e := edge_list.Front(); e != nil; e = e.Next() {
-			cur_ts := getTimeStamp(e)
-			status := e.Value.(map[string]interface{})["cadence_status"]
-			id := e.Value.(map[string]interface{})["ID"]
-			org_id := e.Value.(map[string]interface{})["OrgID"]
+			cur_ts := e.Value.(EdgeState).TimeStamp
+			status := e.Value.(EdgeState).CadenceStatus
+			id := e.Value.(EdgeState).ID
+			org_id := e.Value.(EdgeState).OrgID
 			fmt.Printf("ID:%s last beat:%d status:%s\n", id, cur_ts, status)
 			if CURRENT_STREAM_TIME > 5+cur_ts && status == "UP" {
 				fmt.Printf("EDGE is DOWN!!!!\n\n")
 				////////////////////////////////////////////////////////////////////
-				send_event_msg(producer, "down", id.(string), org_id.(string))
+				send_event_msg(producer, "down", id, org_id)
 				////////////////////////////////////////////////////////////////////
-				e.Value.(map[string]interface{})["cadence_status"] = "DOWN"
+				e.Value.(EdgeState).SetCadenceStatus("DOWN")
 			}
 		}
 		fmt.Printf("\n\n")
@@ -86,7 +86,7 @@ func sanityChecker() {
 		var last_ts int64
 		last_ts = -1
 		for e := edge_list.Front(); e != nil; e = e.Next() {
-			cur_ts := getTimeStamp(e)
+			cur_ts := e.Value.(EdgeState).TimeStamp
 			if last_ts != -1 {
 				if cur_ts < last_ts {
 					fmt.Printf("Crap!!! %s %s", last_ts, cur_ts)
@@ -165,6 +165,17 @@ func (ale *MXEdgeEvent) Encode() ([]byte, error) {
 	return ale.encoded, ale.err
 }
 
+type EdgeState struct {
+	ID            string
+	OrgID         string
+	TimeStamp     int64
+	CadenceStatus string
+}
+
+func (s EdgeState) SetCadenceStatus(st string) {
+	s.CadenceStatus = st
+}
+
 func main() {
 	edge_list = list.New()
 	go sanityChecker()
@@ -210,14 +221,20 @@ func main() {
 			select {
 			case msg := <-consumer:
 				edge_msg := make(map[string]interface{})
+				err := json.Unmarshal([]byte(msg.Value), &edge_msg)
+				if err != nil {
+					panic(err)
+				}
 				org_id := edge_msg["OrgID"].(string)
 				cur_id := edge_msg["ID"].(string)
 				msg_ts := edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"]
-				var m stats.TTStats
-				if err = protobuf3.Unmarshal(msg.Value, &m); err != nil {
-					panic(err)
+				if IS_PB {
+					var m stats.TTStats
+					if err = protobuf3.Unmarshal(msg.Value, &m); err != nil {
+						panic(err)
+					}
+					fmt.Printf("------------------- %+v\n\n\n", m.InfoFromTerminator)
 				}
-				fmt.Printf("------------------- %+v\n\n\n", m.InfoFromTerminator)
 				if !filterMsg(edge_msg) {
 					fmt.Printf("Filtering out msg:%s", edge_msg["MsgType"])
 					break
@@ -234,11 +251,12 @@ func main() {
 					// update the list and put the node at the tail of the list
 					// remember, the tail has the edges with the most recent msgs
 					//fmt.Printf("found stuff %+v\n\n", edge_ptr.Value.(map[string]interface{})["InfoFromTerminator"].(map[string]interface{})["Timestamp"])
-					cur_info := edge_ptr.Value.(map[string]interface{})["InfoFromTerminator"]
+					//cur_info := edge_ptr.Value.(map[string]interface{})["InfoFromTerminator"]
 
-					cur_ts := getEpoch(cur_info.(map[string]interface{})["Timestamp"].(string))
+					//cur_ts := getEpoch(cur_info.(map[string]interface{})["Timestamp"].(string))
+					cur_ts := edge_ptr.Value.(EdgeState).TimeStamp
+					status := edge_ptr.Value.(EdgeState).CadenceStatus
 					if cur_ts < new_ts {
-						status := edge_ptr.Value.(map[string]interface{})["cadence_status"]
 						if status == "DOWN" {
 							fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", cur_id)
 							///////////////////////////////////////////////////////////////////////////
@@ -249,7 +267,14 @@ func main() {
 						// at the back of the list
 						edge_list.Remove(edge_ptr)
 						edge_msg["cadence_status"] = "UP"
-						e := edge_list.PushFront(edge_msg)
+						new_state := EdgeState{
+							CadenceStatus: "UP",
+							ID:            cur_id,
+							OrgID:         org_id,
+							TimeStamp:     new_ts,
+						}
+						//e := edge_list.PushFront(edge_msg)
+						e := edge_list.PushFront(new_state)
 						pos := findPosition(new_ts)
 						if pos != nil {
 							edge_list.MoveAfter(e, pos)
@@ -260,7 +285,14 @@ func main() {
 
 				} else {
 					// New edge, add in the map and enter a new node in the list
-					e := edge_list.PushFront(edge_msg)
+					new_state := EdgeState{
+						CadenceStatus: "UP",
+						ID:            cur_id,
+						OrgID:         org_id,
+						TimeStamp:     new_ts,
+					}
+					//e := edge_list.PushFront(edge_msg)
+					e := edge_list.PushFront(new_state)
 					pos := findPosition(new_ts)
 					if pos != nil {
 						edge_list.MoveAfter(e, pos)
