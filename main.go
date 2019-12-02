@@ -204,14 +204,11 @@ func main() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt)
 
-	msgCount := 0
 	doneCh := make(chan struct{})
 	go func() {
 		for {
 			select {
 			case msg := <-consumer:
-				msgCount++
-
 				edge_msg := make(map[string]interface{})
 				var m stats.TTStats
 				if err = protobuf3.Unmarshal(msg.Value, &m); err != nil {
@@ -279,7 +276,6 @@ func main() {
 				}
 				//fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
 			case consumerError := <-errors:
-				msgCount++
 				fmt.Printf("Recv errors ", string(consumerError.Topic), string(consumerError.Partition), consumerError.Err)
 				doneCh <- struct{}{}
 			case <-signals:
