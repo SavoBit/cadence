@@ -106,12 +106,6 @@ func sanityChecker() {
 	}
 }
 
-func filterMsg(msg map[string]interface{}) bool {
-	// TODO: this function currently has hardcoded stuff
-	// this should be made configurable
-	return msg["MsgType"] == "sys_metric"
-}
-
 type MXEdgeEvent struct {
 	MsgType  string `json:"MsgType"`
 	Time     string `json:"Time"`
@@ -240,10 +234,6 @@ func main() {
 						panic(err)
 					}
 					fmt.Printf("------------------- %+v\n\n\n", m.InfoFromTerminator)
-				}
-				if !filterMsg(edge_msg) {
-					fmt.Printf("Filtering out msg:%s", edge_msg["MsgType"])
-					break
 				}
 				fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n", edge_list.Len(), string(msg.Key), msg_ts)
 				new_ts := getEpoch(msg_ts.(string))
