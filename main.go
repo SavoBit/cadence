@@ -210,6 +210,9 @@ func main() {
 			select {
 			case msg := <-consumer:
 				edge_msg := make(map[string]interface{})
+				org_id := edge_msg["OrgID"].(string)
+				cur_id := edge_msg["ID"].(string)
+				msg_ts := edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"]
 				var m stats.TTStats
 				if err = protobuf3.Unmarshal(msg.Value, &m); err != nil {
 					panic(err)
@@ -219,14 +222,13 @@ func main() {
 					fmt.Printf("Filtering out msg:%s", edge_msg["MsgType"])
 					break
 				}
-				fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n", edge_list.Len(), string(msg.Key), edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"])
-				new_info := edge_msg["InfoFromTerminator"]
-				new_ts := getEpoch(new_info.(map[string]interface{})["Timestamp"].(string))
+				fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n", edge_list.Len(), string(msg.Key), msg_ts)
+				new_ts := getEpoch(msg_ts.(string))
 				if new_ts > CURRENT_STREAM_TIME {
 					CURRENT_STREAM_TIME = new_ts
 				}
 				//keys := make([]string, 0, len(edge_msg))
-				if edge_ptr, ok := edge_ptr_map[edge_msg["ID"].(string)]; ok {
+				if edge_ptr, ok := edge_ptr_map[cur_id]; ok {
 					// check timestamp on the newly recvd msg and compare it to what
 					// we have in the list for this edge. If we recv a more recent msg
 					// update the list and put the node at the tail of the list
@@ -238,9 +240,9 @@ func main() {
 					if cur_ts < new_ts {
 						status := edge_ptr.Value.(map[string]interface{})["cadence_status"]
 						if status == "DOWN" {
-							fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", edge_msg["ID"])
+							fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", cur_id)
 							///////////////////////////////////////////////////////////////////////////
-							send_event_msg(producer, "up", edge_msg["ID"].(string), edge_msg["OrgID"].(string))
+							send_event_msg(producer, "up", cur_id, org_id)
 							///////////////////////////////////////////////////////////////////////////
 						}
 						// more recent beat received, lets delete this element and put it
@@ -252,7 +254,7 @@ func main() {
 						if pos != nil {
 							edge_list.MoveAfter(e, pos)
 						}
-						edge_ptr_map[edge_msg["ID"].(string)] = e
+						edge_ptr_map[cur_id] = e
 						//fmt.Printf("resetting ... %+v", edge_ptr)
 					}
 
@@ -263,7 +265,7 @@ func main() {
 					if pos != nil {
 						edge_list.MoveAfter(e, pos)
 					}
-					edge_ptr_map[edge_msg["ID"].(string)] = e
+					edge_ptr_map[cur_id] = e
 					///////////////////////////////////////////////////////////////////////////
 					// No need to send a UP event if this is the first time we are hearing
 					// about the edge
