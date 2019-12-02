@@ -118,6 +118,37 @@ type MXEdgeEvent struct {
 	err     error
 }
 
+type BasicInfo interface {
+	GetID() string
+	GetOrgID() string
+}
+
+type TTStatsMsg struct {
+	msg stats.TTStats
+}
+
+type MXAgentMsg struct {
+	msg map[string]interface{}
+}
+
+func (m MXAgentMsg) GetID() string {
+	new_info := m.msg["InfoFromTerminator"]
+	return new_info.(map[string]interface{})["ID"].(string)
+}
+
+func (m MXAgentMsg) GetOrgID() string {
+	new_info := m.msg["InfoFromTerminator"]
+	return new_info.(map[string]interface{})["OrgID"].(string)
+}
+
+func (m TTStatsMsg) GetID() string {
+	return m.msg.InfoFromTerminator.ID
+}
+
+func (m TTStatsMsg) GetOrgID() string {
+	return m.msg.InfoFromTerminator.OrgID.String()
+}
+
 func (ale *MXEdgeEvent) Length() int {
 	ale.ensureEncoded()
 	return len(ale.encoded)
