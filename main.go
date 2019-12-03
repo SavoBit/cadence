@@ -35,9 +35,6 @@ var HEART_BEAT_TOPIC string
 // full name for heart beat topic including ENV
 var HB_TOPIC_FULLNAME string
 
-// is the topic PB or not
-var IS_PB bool
-
 func getTimeStamp(e *list.Element) int64 {
 	cur_ts := e.Value.(map[string]interface{})["InfoFromTerminator"]
 	ts := cur_ts.(map[string]interface{})["Timestamp"].(string)
@@ -67,7 +64,7 @@ func checkEdgeStatus(producer sarama.SyncProducer) {
 			status := e.Value.(EdgeState).CadenceStatus
 			id := e.Value.(EdgeState).ID
 			org_id := e.Value.(EdgeState).OrgID
-			fmt.Printf("ID:%s last beat:%d status:%s\n", id, cur_ts, status)
+			fmt.Printf("ID:%s stream_time:%d last beat:%d status:%s\n", id, CURRENT_STREAM_TIME, cur_ts, status)
 			if CURRENT_STREAM_TIME > 5+cur_ts && status == "UP" {
 				fmt.Printf("EDGE is DOWN!!!!\n\n")
 				////////////////////////////////////////////////////////////////////
@@ -204,10 +201,9 @@ func main() {
 
 	//    st, _ := master.Topics()
 	flag.StringVar(&HEART_BEAT_TOPIC, "topic", "marvis-edge-tt-cloud-", "define heart beat topic")
-	flag.BoolVar(&IS_PB, "ispb", false, "define if the topic is pb")
 	flag.Parse()
 	HB_TOPIC_FULLNAME := HEART_BEAT_TOPIC + cloud.ENV
-	fmt.Printf("Consuming from topic: %s ispb: %t\n", HB_TOPIC_FULLNAME, IS_PB)
+	fmt.Printf("Consuming from topic: %s\n", HB_TOPIC_FULLNAME)
 	consumer, errors := consume(HB_TOPIC_FULLNAME, master)
 	if errors != nil {
 		fmt.Printf("Errors while reading:%+v\n", errors)
