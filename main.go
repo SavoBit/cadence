@@ -65,7 +65,7 @@ func checkEdgeStatus(producer sarama.SyncProducer) {
 			id := e.Value.(EdgeState).ID
 			org_id := e.Value.(EdgeState).OrgID
 			fmt.Printf("ID:%s stream_time:%d last beat:%d status:%s\n", id, CURRENT_STREAM_TIME, cur_ts, status)
-			if CURRENT_STREAM_TIME > 5+cur_ts && status == "UP" {
+			if CURRENT_STREAM_TIME > 180+cur_ts && status == "UP" {
 				fmt.Printf("EDGE is DOWN!!!!\n\n")
 				////////////////////////////////////////////////////////////////////
 				send_event_msg(producer, "down", id, org_id)
