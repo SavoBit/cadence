@@ -220,36 +220,44 @@ func main() {
 		for {
 			select {
 			case msg := <-consumer:
-				edge_msg := make(map[string]interface{})
-				err := json.Unmarshal([]byte(msg.Value), &edge_msg)
-				if err != nil {
-					panic(err)
-				}
-				org_id := edge_msg["InfoFromTerminator"].(map[string]interface{})["OrgID"].(string)
-				cur_id := edge_msg["InfoFromTerminator"].(map[string]interface{})["ID"].(string)
-				msg_ts := edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"]
-				if IS_PB {
+				var org_id string
+				var cur_id string
+				var msg_ts string
+				var new_ts int64
+				if HB_TOPIC_FULLNAME == "tt-stats-staging" {
 					var m stats.TTStats
 					if err = protobuf3.Unmarshal(msg.Value, &m); err != nil {
 						panic(err)
 					}
 					fmt.Printf("------------------- %+v\n\n\n", m.InfoFromTerminator)
+					org_id = m.InfoFromTerminator.OrgID.String()
+					cur_id = m.InfoFromTerminator.ID
+					//        ep_ts := m.InfoFromTerminator.Timestamp.String()
+					// msg_ts_str, _ := timeparse.Parse(m.InfoFromTerminator.Timestamp)
+					// msg_ts = msg_ts_str.String()
+					msg_ts = m.InfoFromTerminator.Timestamp.Format("2019-12-02T23:01:04.939683607Z")
+					new_ts = m.InfoFromTerminator.Timestamp.Unix()
+				} else {
+					edge_msg := make(map[string]interface{})
+					err := json.Unmarshal([]byte(msg.Value), &edge_msg)
+					if err != nil {
+						panic(err)
+					}
+					org_id = edge_msg["InfoFromTerminator"].(map[string]interface{})["OrgID"].(string)
+					cur_id = edge_msg["InfoFromTerminator"].(map[string]interface{})["ID"].(string)
+					msg_ts = edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"].(string)
+					new_ts = getEpoch(msg_ts)
 				}
 				fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n", edge_list.Len(), string(msg.Key), msg_ts)
-				new_ts := getEpoch(msg_ts.(string))
+				//new_ts := getEpoch(msg_ts)
 				if new_ts > CURRENT_STREAM_TIME {
 					CURRENT_STREAM_TIME = new_ts
 				}
-				//keys := make([]string, 0, len(edge_msg))
 				if edge_ptr, ok := edge_ptr_map[cur_id]; ok {
 					// check timestamp on the newly recvd msg and compare it to what
 					// we have in the list for this edge. If we recv a more recent msg
 					// update the list and put the node at the tail of the list
 					// remember, the tail has the edges with the most recent msgs
-					//fmt.Printf("found stuff %+v\n\n", edge_ptr.Value.(map[string]interface{})["InfoFromTerminator"].(map[string]interface{})["Timestamp"])
-					//cur_info := edge_ptr.Value.(map[string]interface{})["InfoFromTerminator"]
-
-					//cur_ts := getEpoch(cur_info.(map[string]interface{})["Timestamp"].(string))
 					cur_ts := edge_ptr.Value.(EdgeState).TimeStamp
 					status := edge_ptr.Value.(EdgeState).CadenceStatus
 					if cur_ts < new_ts {
@@ -285,6 +293,7 @@ func main() {
 						OrgID:         org_id,
 						TimeStamp:     new_ts,
 					}
+					fmt.Printf("NEW EDGE: %s %+v\n", msg_ts, new_state)
 					e := edge_list.PushFront(new_state)
 					pos := findPosition(new_ts)
 					if pos != nil {
