@@ -237,9 +237,6 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
 		fmt.Printf("------------------- %+v\n\n\n", m.InfoFromTerminator)
 		org_id = m.InfoFromTerminator.OrgID.String()
 		cur_id = m.InfoFromTerminator.ID
-		//        ep_ts := m.InfoFromTerminator.Timestamp.String()
-		// msg_ts_str, _ := timeparse.Parse(m.InfoFromTerminator.Timestamp)
-		// msg_ts = msg_ts_str.String()
 		msg_ts = m.InfoFromTerminator.Timestamp.Format("2019-12-02T23:01:04.939683607Z")
 		new_ts = m.InfoFromTerminator.Timestamp.Unix()
 	} else {
