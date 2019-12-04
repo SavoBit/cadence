@@ -76,7 +76,7 @@ func checkEdgeStatus(producer sarama.SyncProducer) {
 			id := e.Value.(EdgeState).ID
 			org_id := e.Value.(EdgeState).OrgID
 			fmt.Printf("ID:%s stream_time:%d last beat:%d status:%s\n", id, CURRENT_STREAM_TIME, cur_ts, status)
-			if CURRENT_STREAM_TIME > 170+cur_ts && status == "UP" {
+			if CURRENT_STREAM_TIME > 5+cur_ts && status == "UP" {
 				fmt.Printf("EDGE is DOWN!!!!\n\n")
 				////////////////////////////////////////////////////////////////////
 				send_event_msg(producer, "down", id, org_id, APP_NAME)
@@ -112,6 +112,13 @@ func sanityChecker() {
 		}
 		time.Sleep(1 * time.Second)
 	}
+}
+
+type MXEdgeMsg struct {
+	Time     int64  `json:"Time"`
+	OrgID    string `json:"OrgID"`
+	MXEdgeID string `json:"ID"`
+	AppName  string `json:"AppName"`
 }
 
 type MXEdgeEvent struct {
@@ -217,12 +224,11 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 	return nil
 }
 
-func processMsg(msg *sarama.ConsumerMessage) {
+func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
 	var org_id string
 	var cur_id string
 	var msg_ts string
 	var new_ts int64
-	fmt.Printf("xxxxxxxxxxxxxxx %s\n", HB_TOPIC_FULLNAME)
 	if HB_TOPIC_FULLNAME == "tt-stats-staging" {
 		var m stats.TTStats
 		if err := protobuf3.Unmarshal(msg.Value, &m); err != nil {
@@ -237,33 +243,44 @@ func processMsg(msg *sarama.ConsumerMessage) {
 		msg_ts = m.InfoFromTerminator.Timestamp.Format("2019-12-02T23:01:04.939683607Z")
 		new_ts = m.InfoFromTerminator.Timestamp.Unix()
 	} else {
-		edge_msg := make(map[string]interface{})
-		err := json.Unmarshal([]byte(msg.Value), &edge_msg)
+		edge_m := make(map[string]interface{})
+		err := json.Unmarshal([]byte(msg.Value), &edge_m)
 		if err != nil {
 			panic(err)
 		}
-		org_id = edge_msg["InfoFromTerminator"].(map[string]interface{})["OrgID"].(string)
-		cur_id = edge_msg["InfoFromTerminator"].(map[string]interface{})["ID"].(string)
-		msg_ts = edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"].(string)
+		org_id = edge_m["InfoFromTerminator"].(map[string]interface{})["OrgID"].(string)
+		cur_id = edge_m["InfoFromTerminator"].(map[string]interface{})["ID"].(string)
+		msg_ts = edge_m["InfoFromTerminator"].(map[string]interface{})["Timestamp"].(string)
 		new_ts = getEpoch(msg_ts)
 	}
-	fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n", edge_list.Len(), string(msg.Key), msg_ts)
-	//new_ts := getEpoch(msg_ts)
-	if new_ts > CURRENT_STREAM_TIME {
-		CURRENT_STREAM_TIME = new_ts
+	edge_msg := &MXEdgeMsg{
+		MXEdgeID: cur_id,
+		OrgID:    org_id,
+		Time:     new_ts,
+		AppName:  APP_NAME,
 	}
-	if edge_ptr, ok := edge_ptr_map[cur_id]; ok {
+	return edge_msg
+}
+
+func processMsg(msg *sarama.ConsumerMessage) {
+	edge_msg := extractInfo(msg)
+	fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n", edge_list.Len(), string(msg.Key), edge_msg.Time)
+	//new_ts := getEpoch(msg_ts)
+	if edge_msg.Time > CURRENT_STREAM_TIME {
+		CURRENT_STREAM_TIME = edge_msg.Time
+	}
+	if edge_ptr, ok := edge_ptr_map[edge_msg.MXEdgeID]; ok {
 		// check timestamp on the newly recvd msg and compare it to what
 		// we have in the list for this edge. If we recv a more recent msg
 		// update the list and put the node at the tail of the list
 		// remember, the tail has the edges with the most recent msgs
 		cur_ts := edge_ptr.Value.(EdgeState).TimeStamp
 		status := edge_ptr.Value.(EdgeState).CadenceStatus
-		if cur_ts < new_ts {
+		if cur_ts < edge_msg.Time {
 			if status == "DOWN" {
-				fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", cur_id)
+				fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", edge_msg.MXEdgeID)
 				///////////////////////////////////////////////////////////////////////////
-				send_event_msg(producer, "up", cur_id, org_id, APP_NAME)
+				send_event_msg(producer, "up", edge_msg.MXEdgeID, edge_msg.OrgID, APP_NAME)
 				///////////////////////////////////////////////////////////////////////////
 			}
 			// more recent beat received, lets delete this element and put it
@@ -271,16 +288,16 @@ func processMsg(msg *sarama.ConsumerMessage) {
 			edge_list.Remove(edge_ptr)
 			new_state := EdgeState{
 				CadenceStatus: "UP",
-				ID:            cur_id,
-				OrgID:         org_id,
-				TimeStamp:     new_ts,
+				ID:            edge_msg.MXEdgeID,
+				OrgID:         edge_msg.OrgID,
+				TimeStamp:     edge_msg.Time,
 			}
 			e := edge_list.PushFront(new_state)
-			pos := findPosition(new_ts)
+			pos := findPosition(edge_msg.Time)
 			if pos != nil {
 				edge_list.MoveAfter(e, pos)
 			}
-			edge_ptr_map[cur_id] = e
+			edge_ptr_map[edge_msg.MXEdgeID] = e
 			//fmt.Printf("resetting ... %+v", edge_ptr)
 		}
 
@@ -288,17 +305,17 @@ func processMsg(msg *sarama.ConsumerMessage) {
 		// New edge, add in the map and enter a new node in the list
 		new_state := EdgeState{
 			CadenceStatus: "UP",
-			ID:            cur_id,
-			OrgID:         org_id,
-			TimeStamp:     new_ts,
+			ID:            edge_msg.MXEdgeID,
+			OrgID:         edge_msg.OrgID,
+			TimeStamp:     edge_msg.Time,
 		}
-		fmt.Printf("NEW EDGE: %s %+v\n", msg_ts, new_state)
+		fmt.Printf("NEW EDGE: %s %+v\n", edge_msg.Time, new_state)
 		e := edge_list.PushFront(new_state)
-		pos := findPosition(new_ts)
+		pos := findPosition(edge_msg.Time)
 		if pos != nil {
 			edge_list.MoveAfter(e, pos)
 		}
-		edge_ptr_map[cur_id] = e
+		edge_ptr_map[edge_msg.MXEdgeID] = e
 		///////////////////////////////////////////////////////////////////////////
 		// No need to send a UP event if this is the first time we are hearing
 		// about the edge
@@ -386,115 +403,6 @@ func main() {
 	}
 	///////////////////////////////////////////////
 	///////////////////////////////////////////////
-	/*
-		doneCh := make(chan struct{})
-		go func() {
-			for {
-				select {
-				case msg := <-consumer:
-					var org_id string
-					var cur_id string
-					var msg_ts string
-					var new_ts int64
-					if HB_TOPIC_FULLNAME == "tt-stats-staging" {
-						var m stats.TTStats
-						if err = protobuf3.Unmarshal(msg.Value, &m); err != nil {
-							panic(err)
-						}
-						fmt.Printf("------------------- %+v\n\n\n", m.InfoFromTerminator)
-						org_id = m.InfoFromTerminator.OrgID.String()
-						cur_id = m.InfoFromTerminator.ID
-						//        ep_ts := m.InfoFromTerminator.Timestamp.String()
-						// msg_ts_str, _ := timeparse.Parse(m.InfoFromTerminator.Timestamp)
-						// msg_ts = msg_ts_str.String()
-						msg_ts = m.InfoFromTerminator.Timestamp.Format("2019-12-02T23:01:04.939683607Z")
-						new_ts = m.InfoFromTerminator.Timestamp.Unix()
-					} else {
-						edge_msg := make(map[string]interface{})
-						err := json.Unmarshal([]byte(msg.Value), &edge_msg)
-						if err != nil {
-							panic(err)
-						}
-						org_id = edge_msg["InfoFromTerminator"].(map[string]interface{})["OrgID"].(string)
-						cur_id = edge_msg["InfoFromTerminator"].(map[string]interface{})["ID"].(string)
-						msg_ts = edge_msg["InfoFromTerminator"].(map[string]interface{})["Timestamp"].(string)
-						new_ts = getEpoch(msg_ts)
-					}
-					fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n", edge_list.Len(), string(msg.Key), msg_ts)
-					//new_ts := getEpoch(msg_ts)
-					if new_ts > CURRENT_STREAM_TIME {
-						CURRENT_STREAM_TIME = new_ts
-					}
-					if edge_ptr, ok := edge_ptr_map[cur_id]; ok {
-						// check timestamp on the newly recvd msg and compare it to what
-						// we have in the list for this edge. If we recv a more recent msg
-						// update the list and put the node at the tail of the list
-						// remember, the tail has the edges with the most recent msgs
-						cur_ts := edge_ptr.Value.(EdgeState).TimeStamp
-						status := edge_ptr.Value.(EdgeState).CadenceStatus
-						if cur_ts < new_ts {
-							if status == "DOWN" {
-								fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", cur_id)
-								///////////////////////////////////////////////////////////////////////////
-								send_event_msg(producer, "up", cur_id, org_id, APP_NAME)
-								///////////////////////////////////////////////////////////////////////////
-							}
-							// more recent beat received, lets delete this element and put it
-							// at the back of the list
-							edge_list.Remove(edge_ptr)
-							new_state := EdgeState{
-								CadenceStatus: "UP",
-								ID:            cur_id,
-								OrgID:         org_id,
-								TimeStamp:     new_ts,
-							}
-							e := edge_list.PushFront(new_state)
-							pos := findPosition(new_ts)
-							if pos != nil {
-								edge_list.MoveAfter(e, pos)
-							}
-							edge_ptr_map[cur_id] = e
-							//fmt.Printf("resetting ... %+v", edge_ptr)
-						}
-
-					} else {
-						// New edge, add in the map and enter a new node in the list
-						new_state := EdgeState{
-							CadenceStatus: "UP",
-							ID:            cur_id,
-							OrgID:         org_id,
-							TimeStamp:     new_ts,
-						}
-						fmt.Printf("NEW EDGE: %s %+v\n", msg_ts, new_state)
-						e := edge_list.PushFront(new_state)
-						pos := findPosition(new_ts)
-						if pos != nil {
-							edge_list.MoveAfter(e, pos)
-						}
-						edge_ptr_map[cur_id] = e
-						///////////////////////////////////////////////////////////////////////////
-						// No need to send a UP event if this is the first time we are hearing
-						// about the edge
-						// TODO: start checkpointing and then we could send the UP event if we
-						// get a new edge. Right now whenever cadence starts, we will end up
-						// trigerring UP events for ALL the edges since all of them will be
-						// considered new due to no checkpointing.
-						//send_event_msg(producer, "up", edge_msg["ID"].(string), edge_msg["OrgID"].(string))
-						///////////////////////////////////////////////////////////////////////////
-					}
-					//fmt.Printf("oooooooooooo k:%+v\n\n\n", edge_list.Front())
-				case consumerError := <-errors:
-					fmt.Printf("Recv errors ", string(consumerError.Topic), string(consumerError.Partition), consumerError.Err)
-					doneCh <- struct{}{}
-				case <-signals:
-					fmt.Printf("Interrupt is detected")
-					doneCh <- struct{}{}
-					os.Exit(1)
-				}
-			}
-		}()
-		<-doneCh
-	*/
 }
 
 func send_event_msg(producer sarama.SyncProducer, op string, id string, org_id string, app_name string) {
