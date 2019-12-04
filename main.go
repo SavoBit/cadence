@@ -16,6 +16,9 @@ import (
 	"github.com/mistsys/protobuf3/protobuf3"
 )
 
+// Application name to pass in events
+var APP_NAME string
+
 // sorted list for edges, sorting done on ep-term timestamp. In future we can
 // make this user defined
 var edge_list *list.List
@@ -68,7 +71,7 @@ func checkEdgeStatus(producer sarama.SyncProducer) {
 			if CURRENT_STREAM_TIME > 180+cur_ts && status == "UP" {
 				fmt.Printf("EDGE is DOWN!!!!\n\n")
 				////////////////////////////////////////////////////////////////////
-				send_event_msg(producer, "down", id, org_id)
+				send_event_msg(producer, "down", id, org_id, APP_NAME)
 				////////////////////////////////////////////////////////////////////
 				new_state := EdgeState{
 					CadenceStatus: "DOWN",
@@ -201,6 +204,7 @@ func main() {
 
 	//    st, _ := master.Topics()
 	flag.StringVar(&HEART_BEAT_TOPIC, "topic", "marvis-edge-tt-cloud-", "define heart beat topic")
+	flag.StringVar(&APP_NAME, "app-name", "mxagent", "define application name")
 	flag.Parse()
 	HB_TOPIC_FULLNAME := HEART_BEAT_TOPIC + cloud.ENV
 	fmt.Printf("Consuming from topic: %s\n", HB_TOPIC_FULLNAME)
@@ -260,7 +264,7 @@ func main() {
 						if status == "DOWN" {
 							fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", cur_id)
 							///////////////////////////////////////////////////////////////////////////
-							send_event_msg(producer, "up", cur_id, org_id)
+							send_event_msg(producer, "up", cur_id, org_id, APP_NAME)
 							///////////////////////////////////////////////////////////////////////////
 						}
 						// more recent beat received, lets delete this element and put it
@@ -320,7 +324,7 @@ func main() {
 	<-doneCh
 }
 
-func send_event_msg(producer sarama.SyncProducer, op string, id string, org_id string) {
+func send_event_msg(producer sarama.SyncProducer, op string, id string, org_id string, app_name string) {
 	topic := "mxedge-events-staging" //e.g create-user-topic
 	msg := &MXEdgeEvent{
 		MsgType:  "edge_" + op,
@@ -328,7 +332,7 @@ func send_event_msg(producer sarama.SyncProducer, op string, id string, org_id s
 		S3Path:   "NA",
 		OrgID:    org_id,
 		Time:     time.Now().String(),
-		AppName:  "mxagent",
+		AppName:  app_name,
 	}
 	message := &sarama.ProducerMessage{
 		Topic:     topic,
