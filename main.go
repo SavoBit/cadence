@@ -14,6 +14,7 @@ import (
 
 	list "container/list"
 	"github.com/Shopify/sarama"
+	"github.com/mistsys/cadence/stats"
 	"github.com/mistsys/cadence/ttstats"
 	"github.com/mistsys/mist_go_utils/cloud"
 	"github.com/mistsys/mist_go_utils/flag"
@@ -239,6 +240,12 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
 		cur_id = m.InfoFromTerminator.ID
 		msg_ts = m.InfoFromTerminator.Timestamp.Format("2019-12-02T23:01:04.939683607Z")
 		new_ts = m.InfoFromTerminator.Timestamp.Unix()
+	} else if strings.HasPrefix(HB_TOPIC_FULLNAME, "ap-stats-full-") {
+		var m stats.APStats
+		if err := protobuf3.Unmarshal(msg.Value, &m); err != nil {
+			panic(err)
+		}
+		fmt.Printf("------------------- %+v\n\n\n", m.InfoFromTerminator)
 	} else {
 		edge_m := make(map[string]interface{})
 		err := json.Unmarshal([]byte(msg.Value), &edge_m)
