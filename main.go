@@ -14,7 +14,7 @@ import (
 
 	list "container/list"
 	"github.com/Shopify/sarama"
-	"github.com/mistsys/cadence/stats"
+	"github.com/mistsys/cadence/ttstats"
 	"github.com/mistsys/mist_go_utils/cloud"
 	"github.com/mistsys/mist_go_utils/flag"
 	"github.com/mistsys/mist_go_utils/timeparse"
@@ -139,7 +139,7 @@ type BasicInfo interface {
 }
 
 type TTStatsMsg struct {
-	msg stats.TTStats
+	msg ttstats.TTStats
 }
 
 type MXAgentMsg struct {
@@ -229,8 +229,8 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
 	var cur_id string
 	var msg_ts string
 	var new_ts int64
-	if HB_TOPIC_FULLNAME == "tt-stats-staging" {
-		var m stats.TTStats
+	if strings.HasPrefix(HB_TOPIC_FULLNAME, "tt-stats-") {
+		var m ttstats.TTStats
 		if err := protobuf3.Unmarshal(msg.Value, &m); err != nil {
 			panic(err)
 		}

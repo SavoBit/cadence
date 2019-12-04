@@ -5,7 +5,7 @@
  * Copyright 208 MistSys
  */
 
-package stats
+package ttstats
 
 import (
 	"encoding/binary"
