@@ -42,6 +42,9 @@ var producer sarama.SyncProducer
 // implementation
 var edge_ptr_map map[string]*list.Element
 
+// mutex for controlling access to edge_ptr_map map
+var edgeMapMutex = sync.RWMutex{}
+
 // max time we have seen on the stream. We DONT want to rely on current time
 // and instead our concept of time is what we've seen.
 // Strange? Imagine if you are clearing lag for old msgs.
@@ -314,6 +317,7 @@ func processMsg(edge_msg *MXEdgeMsg) {
 	if edge_msg.Time > CURRENT_STREAM_TIME {
 		CURRENT_STREAM_TIME = edge_msg.Time
 	}
+	edgeMapMutex.Lock()
 	if edge_ptr, ok := edge_ptr_map[edge_msg.ID]; ok {
 		// check timestamp on the newly recvd msg and compare it to what
 		// we have in the list for this edge. If we recv a more recent msg
@@ -371,6 +375,7 @@ func processMsg(edge_msg *MXEdgeMsg) {
 		//send_event_msg(producer, "up", edge_msg["ID"].(string), edge_msg["OrgID"].(string))
 		///////////////////////////////////////////////////////////////////////////
 	}
+	edgeMapMutex.Unlock()
 }
 
 func main() {
