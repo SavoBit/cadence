@@ -258,6 +258,10 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
 		} else {
 			PROCESSED_MSGS += 1
 			fmt.Printf("------------------- msgs:%d %+v\n", PROCESSED_MSGS, m.L2TPTunnels)
+			org_id = m.InfoFromTerminator.OrgID.String()
+			cur_id = m.L2TPTunnels[0].PeerMistID.String()
+			msg_ts = m.InfoFromTerminator.Timestamp.Format("2019-12-02T23:01:04.939683607Z")
+			new_ts = m.InfoFromTerminator.Timestamp.Unix()
 		}
 	} else {
 		edge_m := make(map[string]interface{})
