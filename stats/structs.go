@@ -1,6 +1,5 @@
 //go:generate easyjson -all -no_std_marshalers structs.go
 //go:generate goimports -w structs_easyjson.go
-//
 /*
   EP control daemon, EP stats
 
@@ -21,6 +20,7 @@ import (
 	"github.com/mistsys/mist_go_utils/net/ip"
 	"github.com/mistsys/mist_go_utils/net/wifi"
 	"github.com/mistsys/mist_go_utils/uuid"
+	"github.com/mistsys/mist_go_utils/wxlan"
 	"github.com/mistsys/protobuf3/protobuf3"
 )
 
@@ -157,8 +157,7 @@ type APStats struct {
 	MonitorRssi      []MonitorRssiPkt  `protobuf:"bytes,44"` // DEAD not sent by APs anymore
 	ProbeRequestPkts []ProbeRequestPkt `protobuf:"bytes,45"`
 
-	Orientation Orientation `protobuf:"bytes,46"`
-	Temperature Temperature `protobuf:"bytes,47"`
+	Environment Environment `protobuf:"bytes,80"`
 
 	Cloud CloudStats `protobuf:"bytes,48"`
 
@@ -185,6 +184,10 @@ type HostPort struct {
 	Port uint16 `protobuf:"varint,2"`
 }
 
+func (hp HostPort) String() string {
+	return fmt.Sprintf("Host:%v Port:%v", hp.Host, hp.Port)
+}
+
 // one MDNS advertisement
 type MDNS struct {
 	// is it necessary to split up IPv4 & IPv6?
@@ -207,7 +210,7 @@ type SVIStats struct {
 
 // one IPv4 route
 type IPv4Route struct {
-	Dst ip.AddrMask4 `protobuf:"bytes,1"` // in the case of the default gateway the Dst is 0.0.0.0/0
+	Dst ip.Subnet4 `protobuf:"bytes,1"` // in the case of the default gateway the Dst is 0.0.0.0/0
 	// protobuf id 2 is reserved
 	Gw ip.Addr4 `protobuf:"bytes,3"` // in the case of local subnets the Gw is empty (since there isn't one)
 }
@@ -286,10 +289,13 @@ type DHCPClientStats struct {
 
 	IP ip.AddrMask4 `protobuf:"bytes,6"` // the leased IP, or 0.0.0.0/24 if nothing is leased
 	// protobuf ids 7 and 8 are reserved
-	Gateway ip.Addr4   `protobuf:"bytes,11"` // the default gateway (or 0.0.0.0)
-	DNS     []ip.Addr4 `protobuf:"bytes,12"` // DNS server(s) from in the lease (can be empty)
+	Gateway  ip.Addr4   `protobuf:"bytes,11"`                   // the default gateway (or 0.0.0.0)
+	DNS      []ip.Addr4 `json:",omitempty" protobuf:"bytes,12"` // DNS server(s) from in the lease (can be empty)
+	Domain   string     `json:",omitempty" protobuf:"bytes,13"` // domain name from lease (can be empty)
+	NTP      []ip.Addr4 `json:",omitempty" protobuf:"bytes,14"` // NTP server(s) from the lease (can be empty)
+	ProxyURL string     `json:",omitempty" protobuf:"bytes,15"` // http proxy from lease (can be empty)
 
-	Err string `protobuf:"bytes,9"` // if State=="ERROR", the error in question
+	Err string `json:",omitempty" protobuf:"bytes,9"` // if State=="ERROR", the error in question
 }
 
 type SwitchportStats struct {
@@ -320,6 +326,12 @@ type SwitchportStats struct {
 	TxPeakbps uint64 `protobuf:"varint,28"` // peak bits/sec at the MAC (not the PHY, which adds overhead in terms of preambles and inter-frame-gaps and such) over some reasonable but small time interval no less than 0.1 seconds, and probably closer to 2 seconds
 	TxBytes   uint64 `protobuf:"varint,8"`  // tx bytes
 	TxPkts    uint32 `protobuf:"varint,9"`  // tx packets
+
+	TxCollisions uint32 `json:",omitempty" protobuf:"varint,29"` // half-duplex collisions during [successfull or not] transmission (not an error)
+
+	TxErrors                   uint32 `json:",omitempty" protobuf:"varint,30"` // tx packets with sort of error (the sum of the below fields + some other errors we don't break out)
+	TxExcessiveCollisionErrors uint32 `json:",omitempty" protobuf:"varint,31"` // # of pkts dropped because they had 16 tx collisions in a row
+	TxUnderrunErrors           uint32 `json:",omitempty" protobuf:"varint,32"` // insufficient tx DMA (can't keep up)
 }
 
 // information from the FDBs in the AP
@@ -409,6 +421,11 @@ type PktQueueStats struct { //Packet Queue Stats
 	FullDropped uint32 `protobuf:"varint,2"` // number of packets dropped because tx queue full
 	Dropped     uint32 `protobuf:"varint,3"` // number of packets dropped in tx queue
 	Retried     uint32 `protobuf:"varint,4"` // packets re-sent because they are not received
+	Rtsfail     uint32 `protobuf:"varint,5"` // count of rts attempts that failed to receive cts
+	Throughput  uint32 `protobuf:"varint,6"` // actual data transferred successfully
+	Airuse      uint32 `protobuf:"varint,7"` // airuse
+	Max_used    uint32 `protobuf:"varint,8"` // the high-water mark of the queue utilisation for packets
+	Length      uint32 `protobuf:"varint,9"` // the maximum capacity fo the queue
 }
 
 type PktPendStats struct { //Packet Pending Stats per type and module
@@ -424,6 +441,25 @@ type PktPendStats struct { //Packet Pending Stats per type and module
 	PS     uint32 `protobuf:"varint,10"` // number of packets pending in Power Save (apps) module
 	HW     uint32 `protobuf:"varint,11"` // number of packets pending driver in HW queues
 	All    uint32 `protobuf:"varint,12"` // number of packets pending in all modules and HW queues
+}
+
+type WCQoSStats struct { // Tx and Rx Pkts per QoS type
+	TxPkts  uint32 `protobuf:"varint,1"`
+	TxBytes uint32 `protobuf:"varint,2"`
+	RxPkts  uint32 `protobuf:"varint,3"`
+	RxBytes uint32 `protobuf:"varint,4"`
+}
+
+type QoSStats struct { // Tx and Rx Pkts per QoS type
+	TxPkts        uint32 `protobuf:"varint,1"`
+	TxBytes       uint32 `protobuf:"varint,2"`
+	TxFailedPkts  uint32 `protobuf:"varint,3"`
+	TxFailedBytes uint32 `protobuf:"varint,4"`
+
+	RxPkts        uint32 `protobuf:"varint,5"`
+	RxBytes       uint32 `protobuf:"varint,6"`
+	RxFailedPkts  uint32 `protobuf:"varint,7"`
+	RxFailedBytes uint32 `protobuf:"varint,8"`
 }
 
 // per associated wifi client statistics
@@ -444,7 +480,6 @@ type ClientStats struct {
 
 	ConnectedTimeSec     uint32      `protobuf:"varint,6"`    // note this is in seconds, while the inactive time is in millisec
 	InactiveTimeMilliSec uint32      `protobuf:"varint,7"`    // time since the last transmission from the client
-	LastStatsSecAgo      int         `protobuf:"varint,83"`   // non-zero for clients who are no longer associated, secs since last stats recorded
 	RSSI                 wifi.RSSI   `protobuf:"zigzag32,8"`  // of last data transmission from the client (averaged from PerAntennaRSSI)
 	PerAntennaRSSI       []wifi.RSSI `protobuf:"zigzag32,9"`  // raw, per-antenna RSSIS (averaged into ClientStats.RSSI)
 	AvgRSSI              wifi.RSSI   `protobuf:"zigzag32,10"` // averaged over some number of transmissions, an average of ClientStats.RSSI
@@ -474,6 +509,7 @@ type ClientStats struct {
 	RxDecryptFailures uint32    `protobuf:"varint,30"` // number of packets we couldn't decrypt successfully
 	Rxbps             uint32    `protobuf:"varint,31"` // RxBytes * 8 / <interval between now and the previous ClientStats message>: naturally somewhat meaningless in the first message after a client associates
 	Rxpps             uint32    `protobuf:"varint,32"` // RxPkts / <interval between now and the previous ClientStats message>: naturally somewhat meaningless in the first message after a client associates
+	RxAmpdu           uint32    `protobuf:"varint,86"` // mpdus recd in an ampdu
 
 	RxProbeReqs24 uint32 `protobuf:"varint,33"` // Rx Probe Request in the 2.4GHz Band, heard by WLAN radio
 	RxProbeReqs5  uint32 `protobuf:"varint,34"` // Rx Probe Request in the 5GHz Band, heard by WLAN radio
@@ -505,9 +541,8 @@ type ClientStats struct {
 	MCSRates  MCSRateStats  `protobuf:"bytes,51"`
 
 	// Capabilities
-	Protocol   string     `protobuf:"bytes,52"` // 802.11 protocol type ("a", "b", bg", "n", "ac")
-	NumStreams uint8      `protobuf:"varint,53"`
-	Bandwidth  wifi.Width `protobuf:"varint,80"` // max bandwidth (20/40/80/160) supported by client in this association
+	Protocol   string `protobuf:"bytes,52"` // 802.11 protocol type ("a", "b", bg", "n", "ac")
+	NumStreams uint8  `protobuf:"varint,53"`
 
 	MultiPSKName string `protobuf:"bytes,54"` // this field is obsolete. Older FW still generate this but no cloud support for it.
 
@@ -550,7 +585,11 @@ type ClientStats struct {
 	PwrSave PwrSaveStats `protobuf:"bytes,78"`
 
 	// NAR - Non Aggregated Regulation
-	NonAggrRegulate NarStats `protobuf:"bytes,79"`
+	NonAggrRegulate NarStats             `protobuf:"bytes,79"`
+	Bandwidth       wifi.Width           `protobuf:"varint,80"` // max bandwidth (20/40/80/160) supported by client in this association
+	LastStatsSecAgo int                  `protobuf:"varint,83"` // non-zero for clients who are no longer associated, secs since last stats recorded
+	Group           string               `protobuf:"bytes,84"`  // radius ACL role.  Could be Airespace_ACL_name or Aruba_User_Role
+	QoS             [AC_COUNT]WCQoSStats `protobuf:"bytes,85"`  // Tx and Rx WME Counters per QOS type
 
 	Copied             *ClientStatsCopied       `protobuf:"bytes,2016" json:",omitempty"`
 	InfoFromTerminator *msgs.InfoFromTerminator `protobuf:"bytes,2047" json:",omitempty"`
@@ -885,15 +924,17 @@ type RadioStats struct {
 		TxTossBCMC    uint32 `protobuf:"varint,14"` // TX Toss Bcast/Mcast
 		TxTossUnicast uint32 `protobuf:"varint,15"` // TX Toss Unicast (SCB)
 		//TxBCMC               uint32 `protobuf:"varint,16"` // TX Bcast/Mcast - redundant get info from WLAN TxMcast
-		TxBCMC2Unicast            uint32 `protobuf:"varint,17"` // total TX BCMC packet that was placed on each client unicast queue at interface before tx status
-		TxBCMC2UnicastClient      uint32 `protobuf:"varint,18"` // total TX Client unicast packets from a BCMC packet at interface before tx status
-		TxBcnIntr                 uint32 `protobuf:"varint,20"` // total beacon interrupts TBTT - Target Beacon Transmission Time
-		TxPhyErr                  uint32 `protobuf:"varint,21"` // total TX PhyErr
-		TxFailed                  uint32 `protobuf:"varint,22"` // total TX packet - no ACK or txphy error
-		TxRetries                 uint32 `protobuf:"varint,23"` // how many times a packet was sent with the retry bit set (so 3 tx attempts increments this by 2)
-		TxRetried                 uint32 `protobuf:"varint,24"` // how many packets were retried once or more (so 3 tx attempts only increments this by 1)
-		RxDups                    uint32 `protobuf:"varint,25"` // total Rx packet Duplicates
-		RxRetried                 uint32 `protobuf:"varint,26"` // total Rx packet with Retry bit set in 802.11 header
+		TxBCMC2Unicast       uint32 `protobuf:"varint,17"` // total TX BCMC packet that was placed on each client unicast queue at interface before tx status
+		TxBCMC2UnicastClient uint32 `protobuf:"varint,18"` // total TX Client unicast packets from a BCMC packet at interface before tx status
+		TxBcnIntr            uint32 `protobuf:"varint,20"` // total beacon interrupts TBTT - Target Beacon Transmission Time
+		TxPhyErr             uint32 `protobuf:"varint,21"` // total TX PhyErr
+		TxFailed             uint32 `protobuf:"varint,22"` // total TX packet - no ACK or txphy error
+		TxRetries            uint32 `protobuf:"varint,23"` // how many times a packet was sent with the retry bit set (so 3 tx attempts increments this by 2)
+		TxRetried            uint32 `protobuf:"varint,24"` // how many packets were retried once or more (so 3 tx attempts only increments this by 1)
+		RxDups               uint32 `protobuf:"varint,25"` // total Rx packet Duplicates
+		RxRetried            uint32 `protobuf:"varint,26"` // total Rx packet with Retry bit set in 802.11 header
+		RxDecryptFailures    uint32 `protobuf:"varint,48"` // number of packets we couldn't decrypt successfully (most likely by hardware MacStat/ucode stat)
+
 		TxBCMC2UnicastBytes       uint64 `protobuf:"varint,27"` // total TX BCMC bytes that was placed on each client unicast queue at interface before tx status
 		TxBCMC2UnicastClientBytes uint64 `protobuf:"varint,28"` // total TX Client unicast bytes from a BCMC packet at interface before tx status
 		ReInit                    uint32 `protobuf:"varint,29"` // Fatal Error Radio CORE reinitialized
@@ -909,8 +950,8 @@ type RadioStats struct {
 		//TxHWProbeRespDropTimeout uint32 `protobuf:"varint,38"` // Tx HW Probe Response Dropped, unable to send in time limit
 
 		BlockDataFifo   uint32 `protobuf:"varint,39"` // Block DataFifo status
-		TxNoBuf         uint32 `protobuf:"varint,40"`
-		RxNoBuf         uint32 `protobuf:"varint,41"`
+		TxNoBuf         uint32 `protobuf:"varint,40"` // tx out of buffers errors
+		RxNoBuf         uint32 `protobuf:"varint,41"` // rx out of buffers errors
 		TxPktsSent      uint32 `protobuf:"varint,42"` // total packets sent, including Mcast - tx status stats
 		TxPktsSentMcast uint32 `protobuf:"varint,43"` // total Mcast packets sent - tx status stats
 
@@ -919,56 +960,59 @@ type RadioStats struct {
 		Down              uint32 `protobuf:"varint,46"` // Radio brought down
 		Up                uint32 `protobuf:"varint,47"` // Radio brought up
 
+		TxBcnInactivity uint32 `protobuf:"varint,49"` // Tx Beacon Inactivity Detected
+
 	} `protobuf:"bytes,18"`
 
 	MacStats struct { // mac (ucode) stats
-		TxAllFrm      uint32    `protobuf:"varint,1"`
-		TxRtsFrm      uint32    `protobuf:"varint,2"`
-		TxCtsFrm      uint32    `protobuf:"varint,3"`
-		TxDataNullFrm uint32    `protobuf:"varint,4"`
-		TxBcnFrm      uint32    `protobuf:"varint,5"`
-		TxAmpdu       uint32    `protobuf:"varint,6"`
-		TxMpdu        uint32    `protobuf:"varint,7"`
-		TxUnfl        [6]uint32 `protobuf:"varint,8"`
-		TxBcnUnfl     uint32    `protobuf:"varint,9"`
-		TxPhyErr      uint32    `protobuf:"varint,10"`
+		TxAllFrm      uint32    `protobuf:"varint,1"`  //total number of frames sent, incl. Data, ACK, RTS, CTS, Control Management (includes retransmissions)
+		TxRtsFrm      uint32    `protobuf:"varint,2"`  // number of RTS sent out by the MAC
+		TxCtsFrm      uint32    `protobuf:"varint,3"`  // number of CTS sent out by the MAC
+		TxDataNullFrm uint32    `protobuf:"varint,4"`  // number of Null-Data transmission generated from template
+		TxBcnFrm      uint32    `protobuf:"varint,5"`  // beacons transmitted
+		TxAmpdu       uint32    `protobuf:"varint,6"`  // number of AMPDUs transmitted
+		TxMpdu        uint32    `protobuf:"varint,7"`  // number of MPDUs transmitted
+		TxUnfl        [6]uint32 `protobuf:"varint,8"`  // per-fifo tx underflows
+		TxBcnUnfl     uint32    `protobuf:"varint,9"`  // Template underflows (mac was too slow to transmit ACK/CTS or BCN)
+		TxPhyErr      uint32    `protobuf:"varint,10"` // Transmit phy error, type of error is reported in tx-status for driver enqueued frames
 
-		RxUcastPktEng uint32 `protobuf:"varint,11"`
-		RxMcastPktEng uint32 `protobuf:"varint,12"`
-		RxFrmTooLong  uint32 `protobuf:"varint,13"`
-		RxFrmTooShort uint32 `protobuf:"varint,14"`
+		RxUcastPktEng uint32 `protobuf:"varint,11"` // unicast frames rxed by the pkteng code
+		RxMcastPktEng uint32 `protobuf:"varint,12"` // multicast frames rxed by the pkteng code
+		RxFrmTooLong  uint32 `protobuf:"varint,13"` // Received frame longer than legal limit (2346 bytes)
+		RxFrmTooShort uint32 `protobuf:"varint,14"` // Received frame did not contain enough bytes for its frame type
 
-		RxAnyErr  uint32 `protobuf:"varint,15"`
-		RxBadFcs  uint32 `protobuf:"varint,16"`
-		RxBadPlcp uint32 `protobuf:"varint,17"`
-		RxGlitch  uint32 `protobuf:"varint,18"`
+		RxAnyErr  uint32 `protobuf:"varint,15"` // Any RX error that is not counted by other counters.
+		RxBadFcs  uint32 `protobuf:"varint,16"` // number of frames for which the CRC check failed in the MAC
+		RxBadPlcp uint32 `protobuf:"varint,17"` // parity check of the PLCP header failed
+		RxGlitch  uint32 `protobuf:"varint,18"` // PHY was able to correlate the preamble but not the header
 
-		RxStart       uint32 `protobuf:"varint,19"`
-		RxUcastMbss   uint32 `protobuf:"varint,20"`
-		RxMgmtMbss    uint32 `protobuf:"varint,21"`
-		RxCtl         uint32 `protobuf:"varint,22"`
-		RxRts         uint32 `protobuf:"varint,23"`
-		RxCts         uint32 `protobuf:"varint,24"`
-		RxAck         uint32 `protobuf:"varint,25"`
-		RxUcastNA     uint32 `protobuf:"varint,26"`
-		RxMgmtNA      uint32 `protobuf:"varint,27"`
-		RxCtlNA       uint32 `protobuf:"varint,28"`
-		RxRtsNA       uint32 `protobuf:"varint,29"`
-		RxCtsNA       uint32 `protobuf:"varint,30"`
-		RxDataMcast   uint32 `protobuf:"varint,31"`
-		RxMgmtMcast   uint32 `protobuf:"varint,32"`
-		RxCtlMcast    uint32 `protobuf:"varint,33"`
-		RxBcnMbss     uint32 `protobuf:"varint,34"`
-		RxUcastObss   uint32 `protobuf:"varint,35"`
-		RxBcnObss     uint32 `protobuf:"varint,36"`
-		RxRspTimeout  uint32 `protobuf:"varint,37"`
-		TxBcnCancel   uint32 `protobuf:"varint,38"`
-		RxNoDelimiter uint32 `protobuf:"varint,39"`
-		Rxf0ovfl      uint32 `protobuf:"varint,40"`
-		Rxf1ovfl      uint32 `protobuf:"varint,41"`
-		Rxhlovfl      uint32 `protobuf:"varint,42"`
-		MissBcnDbg    uint32 `protobuf:"varint,43"`
-		Pmqovfl       uint32 `protobuf:"varint,44"`
+		RxStart uint32 `protobuf:"varint,19"` // Number of received frames with a good PLCP (i.e. passing parity check)
+
+		RxUcastMbss   uint32 `protobuf:"varint,20"` // number of received DATA frames with good FCS and matching RA
+		RxMgmtMbss    uint32 `protobuf:"varint,21"` // number of received mgmt frames with good FCS and matching RA
+		RxCtl         uint32 `protobuf:"varint,22"` // number of received CNTRL frames with good FCS and matching RA
+		RxRts         uint32 `protobuf:"varint,23"` // number of unicast RTS addressed to the MAC (good FCS)
+		RxCts         uint32 `protobuf:"varint,24"` // number of unicast CTS addressed to the MAC (good FCS)
+		RxAck         uint32 `protobuf:"varint,25"` // number of ucast ACKS received (good FCS)
+		RxUcastNA     uint32 `protobuf:"varint,26"` // number of received DATA frames (good FCS and not matching RA)
+		RxMgmtNA      uint32 `protobuf:"varint,27"` // number of received MGMT frames (good FCS and not matching RA)
+		RxCtlNA       uint32 `protobuf:"varint,28"` // number of received CNTRL frame (good FCS and not matching RA)
+		RxRtsNA       uint32 `protobuf:"varint,29"` // number of received RTS not addressed to the MAC
+		RxCtsNA       uint32 `protobuf:"varint,30"` // number of received CTS not addressed to the MAC
+		RxDataMcast   uint32 `protobuf:"varint,31"` // number of RX Data multicast frames received by the MAC
+		RxMgmtMcast   uint32 `protobuf:"varint,32"` // number of RX Management multicast frames received by the MAC
+		RxCtlMcast    uint32 `protobuf:"varint,33"` // number of RX Control multicast frames received by the MAC
+		RxBcnMbss     uint32 `protobuf:"varint,34"` // beacons received from member of BSS
+		RxUcastObss   uint32 `protobuf:"varint,35"` // number of unicast frames addressed to the MAC from other BSS (WDS FRAME)
+		RxBcnObss     uint32 `protobuf:"varint,36"` // beacons received from other BSS
+		RxRspTimeout  uint32 `protobuf:"varint,37"` // number of response timeouts for transmitted frames expecting a response
+		TxBcnCancel   uint32 `protobuf:"varint,38"` // transmit beacons canceled due to receipt of beacon (IBSS)
+		RxNoDelimiter uint32 `protobuf:"varint,39"` // number of no valid delimiter detected by ampdu parser
+		Rxf0ovfl      uint32 `protobuf:"varint,40"` // number of receive fifo 0 overflows
+		Rxf1ovfl      uint32 `protobuf:"varint,41"` // number of receive fifo 1 overflows
+		Rxhlovfl      uint32 `protobuf:"varint,42"` // number of length / header fifo overflows
+		MissBcnDbg    uint32 `protobuf:"varint,43"` // number of beacon missed to receive
+		Pmqovfl       uint32 `protobuf:"varint,44"` // number of PMQ overflows
 
 		RxHWProbeReq             uint32 `protobuf:"varint,45"` // Rx HW Probe Request
 		RxHWProbeReqQOverflow    uint32 `protobuf:"varint,46"` // Rx HW Probe Request Queue Overflow
@@ -976,16 +1020,16 @@ type RadioStats struct {
 		TxHWProbeResp            uint32 `protobuf:"varint,48"` // Tx HW Probe Response Successful
 		TxHWProbeRespDropTimeout uint32 `protobuf:"varint,49"` // Tx HW Probe Response Dropped, unable to send in time limit
 
-		TxRtsFail   uint32 `protobuf:"varint,50"`
-		TxUcast     uint32 `protobuf:"varint,51"`
-		TxInRtsTxop uint32 `protobuf:"varint,52"`
-		RxBlockAck  uint32 `protobuf:"varint,53"`
-		TxBlockAck  uint32 `protobuf:"varint,54"`
+		TxRtsFail   uint32 `protobuf:"varint,50"` //number of rts transmission failure that reach retry limit
+		TxUcast     uint32 `protobuf:"varint,51"` // number of unicast tx expecting response other than cts/cwcts
+		TxInRtsTxop uint32 `protobuf:"varint,52"` // number of data frame transmissions during rts txop
+		RxBlockAck  uint32 `protobuf:"varint,53"` // blockack rxcnt
+		TxBlockAck  uint32 `protobuf:"varint,54"` // blockack txcnt
 
-		PhyRxGlitch uint32 `protobuf:"varint,55"`
-		RxDrop2nd   uint32 `protobuf:"varint,56"`
-		RxTooLate   uint32 `protobuf:"varint,57"`
-		PhyBadPlcp  uint32 `protobuf:"varint,58"`
+		PhyRxGlitch uint32 `protobuf:"varint,55"` // PHY count of bphy glitches
+		RxDrop2nd   uint32 `protobuf:"varint,56"` // drop secondary cnt
+		RxTooLate   uint32 `protobuf:"varint,57"` // receive too late
+		PhyBadPlcp  uint32 `protobuf:"varint,58"` // number of bad PLCP reception on BPHY rate
 	} `protobuf:"bytes,31"`
 
 	//Ampdu AmpduCounter `protobuf:"bytes,19"` // Ampdu TX/Rx counters
@@ -1023,6 +1067,8 @@ type RadioStats struct {
 		Reclaim     uint32 `protobuf:"varint,1"` // times had to reclaim a scb reached max scb
 		ReclaimNone uint32 `protobuf:"varint,2"` // times reclaim failed
 	} `protobuf:"bytes,33"`
+
+	QoS [AC_COUNT]QoSStats `protobuf:"bytes,34"` // Tx and Rx counters per QOS type
 }
 
 type RdRoamNotifyStats struct {
@@ -1168,12 +1214,13 @@ type WLANScanResults struct {
 
 // found in ap-wifi-scan-results- topic
 type WifiRadioScanResults struct {
-	ID               ethernet.MAC       `protobuf:"bytes,1"`   // the base MAC (id) of the EP sending these stats
-	ReportAll        bool               `protobuf:"varint,11"` // Scan Results of all APs
-	Uptime           int32              `protobuf:"varint,10"` // uptime since linux boot, in seconds; varint is ok, it shouldn't be negative
-	Scan24GHz        []ScanResults      `protobuf:"bytes,7"`
-	Scan5GHz         []ScanResults      `protobuf:"bytes,8"`
-	ScanChannelStats []WifiChannelStats `protobuf:"bytes,9"` // wifi scan radio per channel stats: noise floor, cca
+	ID                  ethernet.MAC       `protobuf:"bytes,1"`   // the base MAC (id) of the EP sending these stats
+	ReportAll           bool               `protobuf:"varint,11"` // Scan Results of all APs
+	ChannelStatsVersion int                `protobuf:"varint,12"` // ScanChannelStats Version to distinguish which fields are populated
+	Uptime              int32              `protobuf:"varint,10"` // uptime since linux boot, in seconds; varint is ok, it shouldn't be negative
+	Scan24GHz           []ScanResults      `protobuf:"bytes,7"`
+	Scan5GHz            []ScanResults      `protobuf:"bytes,8"`
+	ScanChannelStats    []WifiChannelStats `protobuf:"bytes,9"` // wifi scan radio per channel stats: noise floor, cca
 
 	Copied *struct { // the ep-telemetry shuffle's copied values. filled in by ep-terminator
 		ID     ethernet.MAC `protobuf:"bytes,1"` // the base MAC (id) of the EP sending these stats
@@ -1193,15 +1240,31 @@ type WifiRadioScanResults struct {
 	InfoFromTerminator *msgs.InfoFromTerminator `protobuf:"bytes,2047" json:",omitempty"`
 }
 
+type PktRSSIData struct {
+	RxTime time.Time `protobuf:"bytes,1"`    // Timestamp at which this packet was recorded
+	RSSI   wifi.RSSI `protobuf:"zigzag32,2"` // RSSI value of the packet
+}
+
+type MinorRSSIData struct {
+	Minor    uint16        `protobuf:"varint,1"` // Minors from vBlE, Multi-beacon, Cyclical ibeacon
+	RSSIList []PktRSSIData `protobuf:"bytes,2"`  // List of RSSI values and times they were received for this Minor
+}
+
+type InstanceRSSIData struct {
+	Instance string        `protobuf:"bytes,1"` // Minors from vBlE,Multi-beacon,Cyclical ibeacon with above UUID
+	RSSIList []PktRSSIData `protobuf:"bytes,2"` // List of RSSI values and times they were received for this Instance
+}
+
 /* BLE Scan Results: Advertisement Types and ScanRsp */
 type IBeaconAdvert struct {
-	RxCnt          uint32    `protobuf:"varint,1"`   // Rx count
-	LastRxTime     time.Time `protobuf:"bytes,2"`    // timestamp of last Rx Pkt
-	UUID           uuid.UUID `protobuf:"bytes,3"`    // UUID from vBlE,Multi-beacon,Cyclical ibeacon or altbeacon
-	Major          uint16    `protobuf:"varint,4"`   // last Major from vBlE,Multi-beacon,Cyclical ibeacon or altbeacon
-	Minors         []uint16  `protobuf:"varint,5"`   // Minors from vBlE,Multi-beacon,Cyclical ibeacon with above UUID
-	SupportsMotion bool      `protobuf:"varint,6"`   // Supports Motion
-	TxPower        int8      `protobuf:"zigzag32,7"` // Tx Power from the advertisement pkt
+	RxCnt          uint32          `protobuf:"varint,1"`   // Rx count
+	LastRxTime     time.Time       `protobuf:"bytes,2"`    // timestamp of last Rx Pkt
+	UUID           uuid.UUID       `protobuf:"bytes,3"`    // UUID from vBlE,Multi-beacon,Cyclical ibeacon or altbeacon
+	Major          uint16          `protobuf:"varint,4"`   // last Major from vBlE,Multi-beacon,Cyclical ibeacon or altbeacon
+	Minors         []uint16        `protobuf:"varint,5"`   // Minors from vBlE,Multi-beacon,Cyclical ibeacon with above UUID
+	SupportsMotion bool            `protobuf:"varint,6"`   // Supports Motion
+	TxPower        int8            `protobuf:"zigzag32,7"` // Tx Power from the advertisement pkt
+	MinorRSSIList  []MinorRSSIData `protobuf:"bytes,8"`    // List of RSSI values and times they were received
 }
 
 type AltBeaconAdvert struct {
@@ -1214,11 +1277,12 @@ type AltBeaconAdvert struct {
 }
 
 type EddystoneUIDAdvert struct {
-	RxCnt      uint32    `protobuf:"varint,1"`   // Rx count
-	LastRxTime time.Time `protobuf:"bytes,2"`    // timestamp of last Rx Pkt
-	Namespace  string    `protobuf:"bytes,3"`    // Namespace from vBlE or Multi-beacon
-	Instances  []string  `protobuf:"bytes,4"`    // Instances from vBlE or Multi-beacon with above Namespace
-	TxPower    int8      `protobuf:"zigzag32,7"` // Tx Power from the advertisement pkt
+	RxCnt            uint32             `protobuf:"varint,1"`   // Rx count
+	LastRxTime       time.Time          `protobuf:"bytes,2"`    // timestamp of last Rx Pkt
+	Namespace        string             `protobuf:"bytes,3"`    // Namespace from vBlE or Multi-beacon
+	Instances        []string           `protobuf:"bytes,4"`    // Instances from vBlE or Multi-beacon with above Namespace
+	TxPower          int8               `protobuf:"zigzag32,7"` // Tx Power from the advertisement pkt
+	InstanceRSSIList []InstanceRSSIData `protobuf:"bytes,8"`    // List of RSSI values and times they were received
 }
 
 type EddystoneTLMAdvert struct {
@@ -1239,10 +1303,11 @@ type EddystoneEncryptedTLMAdvert struct {
 }
 
 type EddystoneURLAdvert struct {
-	RxCnt      uint32    `protobuf:"varint,1"`   // Rx count
-	LastRxTime time.Time `protobuf:"bytes,2"`    // timestamp of last Rx Pkt
-	PrefixURL  string    `protobuf:"bytes,3"`    // Namespace from Multi-beacon
-	TxPower    int8      `protobuf:"zigzag32,7"` // Tx Power from the advertisement pkt
+	RxCnt      uint32        `protobuf:"varint,1"`   // Rx count
+	LastRxTime time.Time     `protobuf:"bytes,2"`    // timestamp of last Rx Pkt
+	PrefixURL  string        `protobuf:"bytes,3"`    // Namespace from Multi-beacon
+	TxPower    int8          `protobuf:"zigzag32,7"` // Tx Power from the advertisement pkt
+	RSSIList   []PktRSSIData `protobuf:"bytes,8"`    // List of RSSI values and times they were received
 }
 
 type EddystoneEIDAdvert struct {
@@ -1606,19 +1671,19 @@ type WxlanUsage struct {
 }
 
 type WxlanFlowState struct {
-	State     int32        `protobuf:"varint,1"` // state of this flow
-	Sip       ip.Addr4     `protobuf:"bytes,2"`  // Source IP address
-	Dip       ip.Addr4     `protobuf:"bytes,3"`  // Dest IP address
-	Eth_proto uint16       `protobuf:"varint,4"` // Ethernet Protocol
-	Vlan      uint16       `protobuf:"varint,5"` // Vlan Tag
-	Sport     uint16       `protobuf:"varint,6"` // Source IP port.
-	Dport     uint16       `protobuf:"varint,7"` // Destination IP port.
-	Ip_proto  ip.Protocol  `protobuf:"varint,8"` // IP Protocol.
-	Src_dev   string       `protobuf:"bytes,9"`  // Src Device name.
-	Dmac      ethernet.MAC `protobuf:"bytes,10"` // Dest MAC address
-	Smac      ethernet.MAC `protobuf:"bytes,11"` // Source MAC address
-	When      time.Time    `protobuf:"bytes,12"` // when this flow is allowed/denied/timedout, etc.
-	Hostname  string       `protobuf:"bytes,13" json:",omitempty"`
+	State     wxlan.FLOW_STATE `protobuf:"varint,1"` // state of this flow
+	Sip       ip.Addr6         `protobuf:"bytes,2"`  // Source IP address
+	Dip       ip.Addr6         `protobuf:"bytes,3"`  // Dest IP address
+	Eth_proto uint16           `protobuf:"varint,4"` // Ethernet Protocol
+	Vlan      uint16           `protobuf:"varint,5"` // Vlan Tag
+	Sport     uint16           `protobuf:"varint,6"` // Source IP port.
+	Dport     uint16           `protobuf:"varint,7"` // Destination IP port.
+	Ip_proto  ip.Protocol      `protobuf:"varint,8"` // IP Protocol.
+	Src_dev   string           `protobuf:"bytes,9"`  // Src Device name.
+	Dmac      ethernet.MAC     `protobuf:"bytes,10"` // Dest MAC address
+	Smac      ethernet.MAC     `protobuf:"bytes,11"` // Source MAC address
+	When      time.Time        `protobuf:"bytes,12"` // when this flow is allowed/denied/timedout, etc.
+	Hostname  string           `protobuf:"bytes,13" json:",omitempty"`
 }
 
 // find the ClientStats of the given client (by MAC). returns nil if client isn't found
@@ -1630,6 +1695,14 @@ func (st *APStats) FindClient(mac ethernet.MAC) *ClientStats {
 		}
 	}
 	return nil
+}
+
+// AP Environment related data like Orientation, Temperature, Humidity and Pressure
+type Environment struct {
+	Orientation       Orientation `protobuf:"bytes,1"`
+	Temperature       Temperature `protobuf:"bytes,2"`
+	Relative_Humidity float32     `protobuf:"fixed32,3"` // Relative Humidity in percentage
+	Pressure          float32     `protobuf:"fixed32,4"` // Pressure in hPa
 }
 
 // AP orientation relative to gravity (assuming the AP isn't vibrating), and the local magnetic field
@@ -1686,13 +1759,31 @@ type LLDPpwrStats struct {
 	Pd_needs  uint16 `protobuf:"varint,5"` // Power Needed by PD (mW)
 }
 
+type LLDPvlanNm struct {
+	Vlan_id   uint16 `protobuf:"varint,1"` // Vlan ID
+	Vlan_name string `protobuf:"bytes,2"`  // Vlan Name String
+}
+
 // LLDP stats and Negotiated Power Levels.
 type LLDPneighbor struct {
-	Port_desc string `protobuf:"bytes,1"` // Attached Port Description
-	Sys_name  string `protobuf:"bytes,2"` // System name
-	Sys_desc  string `protobuf:"bytes,3"` // System Description
-	Mgmt_addr string `protobuf:"bytes,4"` // Management Address
-	Port_id   string `protobuf:"bytes,5"` // Port id
+	Port_desc     string       `protobuf:"bytes,1"`  // Attached Port Description
+	Sys_name      string       `protobuf:"bytes,2"`  // System name
+	Sys_desc      string       `protobuf:"bytes,3"`  // System Description
+	Mgmt_addr     string       `protobuf:"bytes,4"`  // Management Address
+	Port_id       string       `protobuf:"bytes,5"`  // Port id
+	Autoneg_sup   string       `protobuf:"bytes,6"`  // Auto Negotiation supported / Enabled.
+	Autoneg_adv   string       `protobuf:"bytes,7"`  // Auto Negotiation speed and duplex advertised
+	MTU           uint16       `protobuf:"varint,8"` // The Maximum Frame Size
+	PortVlan_id   uint16       `protobuf:"varint,9"` // The Port Vlan ID
+	PortVlan_name []LLDPvlanNm `protobuf:"bytes,10"` // The Port Vlan Name String
+	Hardware_rev  string       `protobuf:"bytes,11"` // The Switch Hardware Rev.
+	Fw_rev        string       `protobuf:"bytes,12"` // The Switch Firmware Rev.
+	Sw_rev        string       `protobuf:"bytes,13"` // The Switch Software Rev.
+	Serial_number string       `protobuf:"bytes,14"` // The Switch Serial Number.
+	Mfg_name      string       `protobuf:"bytes,15"` // The Switch Manufacturer Name.
+	Model_name    string       `protobuf:"bytes,16"` // The Switch Model Name (LLDP-MED)
+	Asset_id      string       `protobuf:"bytes,17"` // The Switch Asset ID
+	Chassis_id    string       `protobuf:"bytes,18"` // The Switch Chassis ID
 }
 
 // AP Power Manager stats.

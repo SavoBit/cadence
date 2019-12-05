@@ -25,6 +25,12 @@ import (
 // Application name to pass in events
 var APP_NAME string
 
+// lets keep track of bad msgs
+var BAD_MSGS int64
+
+// track total correct msgs
+var PROCESSED_MSGS int64
+
 // sorted list for edges, sorting done on ep-term timestamp. In future we can
 // make this user defined
 var edge_list *list.List
@@ -243,9 +249,12 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
 	} else if strings.HasPrefix(HB_TOPIC_FULLNAME, "ap-stats-full-") {
 		var m stats.APStats
 		if err := protobuf3.Unmarshal(msg.Value, &m); err != nil {
-			panic(err)
+			BAD_MSGS += 1
+			fmt.Printf("BAD msgs %d\n", BAD_MSGS)
+			return nil
 		}
-		fmt.Printf("------------------- %+v\n\n\n", m.InfoFromTerminator)
+		PROCESSED_MSGS += 1
+		fmt.Printf("------------------- msgs:%d %+v\n", PROCESSED_MSGS, m.InfoFromTerminator)
 	} else {
 		edge_m := make(map[string]interface{})
 		err := json.Unmarshal([]byte(msg.Value), &edge_m)
@@ -268,6 +277,9 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
 
 func processMsg(msg *sarama.ConsumerMessage) {
 	edge_msg := extractInfo(msg)
+	if edge_msg == nil {
+		return
+	}
 	fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n", edge_list.Len(), string(msg.Key), edge_msg.Time)
 	//new_ts := getEpoch(msg_ts)
 	if edge_msg.Time > CURRENT_STREAM_TIME {
