@@ -121,11 +121,18 @@ func sanityChecker() {
 	}
 }
 
+type MXEdgeArrMsg struct {
+	Time    int64    `json:"Time"`
+	OrgID   string   `json:"OrgID"`
+	IDs     []string `json:"ID"`
+	AppName string   `json:"AppName"`
+}
+
 type MXEdgeMsg struct {
-	Time     int64  `json:"Time"`
-	OrgID    string `json:"OrgID"`
-	MXEdgeID string `json:"ID"`
-	AppName  string `json:"AppName"`
+	Time    int64  `json:"Time"`
+	OrgID   string `json:"OrgID"`
+	ID      string `json:"ID"`
+	AppName string `json:"AppName"`
 }
 
 type MXEdgeEvent struct {
@@ -224,18 +231,32 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 	// https://github.com/Shopify/sarama/blob/master/consumer_group.go#L27-L29
 	for message := range claim.Messages() {
 		//log.Printf("Message claimed: value = %s, timestamp = %v, topic = %s", string(message.Value), message.Timestamp, message.Topic)
-		processMsg(message)
+		edge_msg := extractInfo(message)
+		if edge_msg == nil {
+			return nil
+		}
+		for _, this_id := range edge_msg.IDs {
+			edge_m := &MXEdgeMsg{
+				ID:      this_id,
+				OrgID:   edge_msg.OrgID,
+				Time:    edge_msg.Time,
+				AppName: edge_msg.AppName,
+			}
+			processMsg(edge_m)
+		}
 		session.MarkMessage(message, "")
 	}
 
 	return nil
 }
 
-func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
+func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeArrMsg {
+	fmt.Printf("Recv msgs len:%d k:%+v\n", edge_list.Len(), string(msg.Key))
 	var org_id string
 	var cur_id string
 	var msg_ts string
 	var new_ts int64
+	var ids []string
 	if strings.HasPrefix(HB_TOPIC_FULLNAME, "tt-stats-") {
 		var m ttstats.TTStats
 		if err := protobuf3.Unmarshal(msg.Value, &m); err != nil {
@@ -246,6 +267,7 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
 		cur_id = m.InfoFromTerminator.ID
 		msg_ts = m.InfoFromTerminator.Timestamp.Format("2019-12-02T23:01:04.939683607Z")
 		new_ts = m.InfoFromTerminator.Timestamp.Unix()
+		ids = append(ids, cur_id)
 	} else if strings.HasPrefix(HB_TOPIC_FULLNAME, "ap-stats-full-") {
 		var m stats.APStats
 		if err := protobuf3.Unmarshal(msg.Value, &m); err != nil {
@@ -253,13 +275,17 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
 			fmt.Printf("BAD msgs %d\n", BAD_MSGS)
 			return nil
 		}
+		fmt.Printf("------ AP:%s msgs:%d %+v\n", m.ID, PROCESSED_MSGS, m.L2TPTunnels)
 		if m.L2TPTunnels == nil {
 			return nil
 		} else {
 			PROCESSED_MSGS += 1
-			fmt.Printf("------------------- msgs:%d %+v\n", PROCESSED_MSGS, m.L2TPTunnels)
+			fmt.Printf("------ AP:%s msgs:%d %+v\n", m.ID, PROCESSED_MSGS, m.L2TPTunnels)
 			org_id = m.InfoFromTerminator.OrgID.String()
-			cur_id = m.L2TPTunnels[0].PeerMistID.String()
+			for index, _ := range m.L2TPTunnels {
+				cur_id = m.L2TPTunnels[index].PeerMistID.String()
+				ids = append(ids, cur_id)
+			}
 			msg_ts = m.InfoFromTerminator.Timestamp.Format("2019-12-02T23:01:04.939683607Z")
 			new_ts = m.InfoFromTerminator.Timestamp.Unix()
 		}
@@ -273,27 +299,23 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
 		cur_id = edge_m["InfoFromTerminator"].(map[string]interface{})["ID"].(string)
 		msg_ts = edge_m["InfoFromTerminator"].(map[string]interface{})["Timestamp"].(string)
 		new_ts = getEpoch(msg_ts)
+		ids = append(ids, cur_id)
 	}
-	edge_msg := &MXEdgeMsg{
-		MXEdgeID: cur_id,
-		OrgID:    org_id,
-		Time:     new_ts,
-		AppName:  APP_NAME,
+	edge_msg := &MXEdgeArrMsg{
+		IDs:     ids,
+		OrgID:   org_id,
+		Time:    new_ts,
+		AppName: APP_NAME,
 	}
 	return edge_msg
 }
 
-func processMsg(msg *sarama.ConsumerMessage) {
-	edge_msg := extractInfo(msg)
-	if edge_msg == nil {
-		return
-	}
-	fmt.Printf("Recv msgs len:%d k:%+v msg:%+v\n", edge_list.Len(), string(msg.Key), edge_msg.Time)
+func processMsg(edge_msg *MXEdgeMsg) {
 	//new_ts := getEpoch(msg_ts)
 	if edge_msg.Time > CURRENT_STREAM_TIME {
 		CURRENT_STREAM_TIME = edge_msg.Time
 	}
-	if edge_ptr, ok := edge_ptr_map[edge_msg.MXEdgeID]; ok {
+	if edge_ptr, ok := edge_ptr_map[edge_msg.ID]; ok {
 		// check timestamp on the newly recvd msg and compare it to what
 		// we have in the list for this edge. If we recv a more recent msg
 		// update the list and put the node at the tail of the list
@@ -302,9 +324,9 @@ func processMsg(msg *sarama.ConsumerMessage) {
 		status := edge_ptr.Value.(EdgeState).CadenceStatus
 		if cur_ts < edge_msg.Time {
 			if status == "DOWN" {
-				fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", edge_msg.MXEdgeID)
+				fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", edge_msg.ID)
 				///////////////////////////////////////////////////////////////////////////
-				send_event_msg(producer, "up", edge_msg.MXEdgeID, edge_msg.OrgID, APP_NAME)
+				send_event_msg(producer, "up", edge_msg.ID, edge_msg.OrgID, APP_NAME)
 				///////////////////////////////////////////////////////////////////////////
 			}
 			// more recent beat received, lets delete this element and put it
@@ -312,7 +334,7 @@ func processMsg(msg *sarama.ConsumerMessage) {
 			edge_list.Remove(edge_ptr)
 			new_state := EdgeState{
 				CadenceStatus: "UP",
-				ID:            edge_msg.MXEdgeID,
+				ID:            edge_msg.ID,
 				OrgID:         edge_msg.OrgID,
 				TimeStamp:     edge_msg.Time,
 			}
@@ -321,7 +343,7 @@ func processMsg(msg *sarama.ConsumerMessage) {
 			if pos != nil {
 				edge_list.MoveAfter(e, pos)
 			}
-			edge_ptr_map[edge_msg.MXEdgeID] = e
+			edge_ptr_map[edge_msg.ID] = e
 			//fmt.Printf("resetting ... %+v", edge_ptr)
 		}
 
@@ -329,7 +351,7 @@ func processMsg(msg *sarama.ConsumerMessage) {
 		// New edge, add in the map and enter a new node in the list
 		new_state := EdgeState{
 			CadenceStatus: "UP",
-			ID:            edge_msg.MXEdgeID,
+			ID:            edge_msg.ID,
 			OrgID:         edge_msg.OrgID,
 			TimeStamp:     edge_msg.Time,
 		}
@@ -339,7 +361,7 @@ func processMsg(msg *sarama.ConsumerMessage) {
 		if pos != nil {
 			edge_list.MoveAfter(e, pos)
 		}
-		edge_ptr_map[edge_msg.MXEdgeID] = e
+		edge_ptr_map[edge_msg.ID] = e
 		///////////////////////////////////////////////////////////////////////////
 		// No need to send a UP event if this is the first time we are hearing
 		// about the edge
