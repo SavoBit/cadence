@@ -253,8 +253,12 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeMsg {
 			fmt.Printf("BAD msgs %d\n", BAD_MSGS)
 			return nil
 		}
-		PROCESSED_MSGS += 1
-		fmt.Printf("------------------- msgs:%d %+v\n", PROCESSED_MSGS, m.InfoFromTerminator)
+		if m.L2TPTunnels == nil {
+			return nil
+		} else {
+			PROCESSED_MSGS += 1
+			fmt.Printf("------------------- msgs:%d %+v\n", PROCESSED_MSGS, m.L2TPTunnels)
+		}
 	} else {
 		edge_m := make(map[string]interface{})
 		err := json.Unmarshal([]byte(msg.Value), &edge_m)
