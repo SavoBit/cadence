@@ -83,7 +83,7 @@ func checkEdgeStatus(producer sarama.SyncProducer) {
 			id := e.Value.(EdgeState).ID
 			org_id := e.Value.(EdgeState).OrgID
 			fmt.Printf("ID:%s stream_time:%d last beat:%d status:%s\n", id, CURRENT_STREAM_TIME, cur_ts, status)
-			if CURRENT_STREAM_TIME > 5+cur_ts && status == "UP" {
+			if CURRENT_STREAM_TIME > 170+cur_ts && status == "UP" {
 				fmt.Printf("EDGE is DOWN!!!!\n\n")
 				////////////////////////////////////////////////////////////////////
 				send_event_msg(producer, "down", id, org_id, APP_NAME)
@@ -232,17 +232,16 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 	for message := range claim.Messages() {
 		//log.Printf("Message claimed: value = %s, timestamp = %v, topic = %s", string(message.Value), message.Timestamp, message.Topic)
 		edge_msg := extractInfo(message)
-		if edge_msg == nil {
-			return nil
-		}
-		for _, this_id := range edge_msg.IDs {
-			edge_m := &MXEdgeMsg{
-				ID:      this_id,
-				OrgID:   edge_msg.OrgID,
-				Time:    edge_msg.Time,
-				AppName: edge_msg.AppName,
+		if edge_msg != nil {
+			for _, this_id := range edge_msg.IDs {
+				edge_m := &MXEdgeMsg{
+					ID:      this_id,
+					OrgID:   edge_msg.OrgID,
+					Time:    edge_msg.Time,
+					AppName: edge_msg.AppName,
+				}
+				processMsg(edge_m)
 			}
-			processMsg(edge_m)
 		}
 		session.MarkMessage(message, "")
 	}
@@ -251,7 +250,6 @@ func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, clai
 }
 
 func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeArrMsg {
-	fmt.Printf("Recv msgs len:%d k:%+v\n", edge_list.Len(), string(msg.Key))
 	var org_id string
 	var cur_id string
 	var msg_ts string
@@ -260,9 +258,11 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeArrMsg {
 	if strings.HasPrefix(HB_TOPIC_FULLNAME, "tt-stats-") {
 		var m ttstats.TTStats
 		if err := protobuf3.Unmarshal(msg.Value, &m); err != nil {
-			panic(err)
+			BAD_MSGS += 1
+			fmt.Printf("BAD msgs %d\n", BAD_MSGS)
+			return nil
 		}
-		fmt.Printf("------------------- %+v\n\n\n", m.InfoFromTerminator)
+		//fmt.Printf("------------------- %+v\n\n\n", m.InfoFromTerminator)
 		org_id = m.InfoFromTerminator.OrgID.String()
 		cur_id = m.InfoFromTerminator.ID
 		msg_ts = m.InfoFromTerminator.Timestamp.Format("2019-12-02T23:01:04.939683607Z")
@@ -275,7 +275,6 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeArrMsg {
 			fmt.Printf("BAD msgs %d\n", BAD_MSGS)
 			return nil
 		}
-		fmt.Printf("------ AP:%s msgs:%d %+v\n", m.ID, PROCESSED_MSGS, m.L2TPTunnels)
 		if m.L2TPTunnels == nil {
 			return nil
 		} else {
@@ -468,28 +467,4 @@ func send_event_msg(producer sarama.SyncProducer, op string, id string, org_id s
 	}
 	partition, offset, _ := producer.SendMessage(message)
 	fmt.Printf("Event:%s msg sent %+v %+v ", op, partition, offset)
-}
-
-func consume(topic string, master sarama.Consumer) (chan *sarama.ConsumerMessage, chan *sarama.ConsumerError) {
-	consumers := make(chan *sarama.ConsumerMessage)
-	errors := make(chan *sarama.ConsumerError)
-	partitions, _ := master.Partitions(topic)
-	fmt.Printf("Topic:%s # partitions:%d\n", topic, len(partitions))
-
-	consumer, err := master.ConsumePartition(topic, partitions[0], sarama.OffsetNewest)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("Lets start consuming..\n")
-	go func(topic string, consumer sarama.PartitionConsumer) {
-		for {
-			select {
-			case consumerError := <-consumer.Errors():
-				errors <- consumerError
-			case msg := <-consumer.Messages():
-				consumers <- msg
-			}
-		}
-	}(topic, consumer)
-	return consumers, errors
 }
