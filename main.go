@@ -284,9 +284,11 @@ func extractInfo(msg *sarama.ConsumerMessage) *MXEdgeArrMsg {
 			PROCESSED_MSGS += 1
 			fmt.Printf("------ AP:%s msgs:%d %+v\n", m.ID, PROCESSED_MSGS, m.L2TPTunnels)
 			org_id = m.InfoFromTerminator.OrgID.String()
-			for index, _ := range m.L2TPTunnels {
-				cur_id = m.L2TPTunnels[index].PeerMistID.String()
-				ids = append(ids, cur_id)
+			for index, ele := range m.L2TPTunnels {
+				if strings.HasPrefix(ele.State, "established") {
+					cur_id = m.L2TPTunnels[index].PeerMistID.String()
+					ids = append(ids, cur_id)
+				}
 			}
 			msg_ts = m.InfoFromTerminator.Timestamp.Format("2019-12-02T23:01:04.939683607Z")
 			new_ts = m.InfoFromTerminator.Timestamp.Unix()
