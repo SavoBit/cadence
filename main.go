@@ -22,6 +22,9 @@ import (
 	"github.com/mistsys/protobuf3/protobuf3"
 )
 
+// Currently we just support one event description for each app
+var EV_DESC string
+
 // Application name to pass in events
 var APP_NAME string
 
@@ -89,7 +92,7 @@ func checkEdgeStatus(producer sarama.SyncProducer) {
 			if CURRENT_STREAM_TIME > 170+cur_ts && status == "UP" {
 				fmt.Printf("EDGE is DOWN!!!!\n\n")
 				////////////////////////////////////////////////////////////////////
-				send_event_msg(producer, "down", id, org_id, APP_NAME)
+				send_event_msg(producer, "down", id, org_id, APP_NAME, EV_DESC)
 				////////////////////////////////////////////////////////////////////
 				new_state := EdgeState{
 					CadenceStatus: "DOWN",
@@ -141,6 +144,7 @@ type MXEdgeMsg struct {
 type MXEdgeEvent struct {
 	MsgType  string `json:"MsgType"`
 	Time     string `json:"Time"`
+	Text     string `json:"Text"`
 	OrgID    string `json:"OrgID"`
 	MXEdgeID string `json:"ID"`
 	S3Path   string `json:"S3Path"`
@@ -331,7 +335,7 @@ func processMsg(edge_msg *MXEdgeMsg) {
 			if status == "DOWN" {
 				fmt.Printf("YAY! Edge ID:%s came back to life!\n\n\n", edge_msg.ID)
 				///////////////////////////////////////////////////////////////////////////
-				send_event_msg(producer, "up", edge_msg.ID, edge_msg.OrgID, APP_NAME)
+				send_event_msg(producer, "up", edge_msg.ID, edge_msg.OrgID, APP_NAME, EV_DESC)
 				///////////////////////////////////////////////////////////////////////////
 			}
 			// more recent beat received, lets delete this element and put it
@@ -374,7 +378,7 @@ func processMsg(edge_msg *MXEdgeMsg) {
 		// get a new edge. Right now whenever cadence starts, we will end up
 		// trigerring UP events for ALL the edges since all of them will be
 		// considered new due to no checkpointing.
-		//send_event_msg(producer, "up", edge_msg["ID"].(string), edge_msg["OrgID"].(string))
+		//send_event_msg(producer, "up", edge_msg.ID, edge_msg.OrgID, APP_NAME, EV_DESC)
 		///////////////////////////////////////////////////////////////////////////
 	}
 	edgeMapMutex.Unlock()
@@ -404,6 +408,7 @@ func main() {
 	//    st, _ := master.Topics()
 	flag.StringVar(&HEART_BEAT_TOPIC, "topic", "marvis-edge-tt-cloud-", "define heart beat topic")
 	flag.StringVar(&APP_NAME, "app-name", "mxagent", "define application name")
+	flag.StringVar(&EV_DESC, "desc", "", "define event description")
 	flag.Parse()
 	HB_TOPIC_FULLNAME = HEART_BEAT_TOPIC + cloud.ENV
 	fmt.Printf("Consuming from topic: %s\n", HB_TOPIC_FULLNAME)
@@ -457,13 +462,14 @@ func main() {
 	///////////////////////////////////////////////
 }
 
-func send_event_msg(producer sarama.SyncProducer, op string, id string, org_id string, app_name string) {
+func send_event_msg(producer sarama.SyncProducer, op string, id string, org_id string, app_name string, desc string) {
 	topic := "mxedge-events-staging" //e.g create-user-topic
 	msg := &MXEdgeEvent{
 		MsgType:  "edge_" + op,
 		MXEdgeID: id,
 		S3Path:   "NA",
 		OrgID:    org_id,
+		Text:     desc,
 		Time:     time.Now().String(),
 		AppName:  app_name,
 	}
